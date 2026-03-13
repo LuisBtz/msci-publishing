@@ -154,15 +154,14 @@ export async function POST(req) {
           : bannerSubItems.filter(f => f.name.endsWith('.webp'))
 
         bannerFiles.forEach(f => {
-          if (f.name.endsWith('.webp')) {
-            const ratio = f.name.match(/^(\d+x\d+)_/)?.[1] || f.name.replace('.webp', '')
-            banners[ratio] = {
-              filename: f.name,
-              itemId: f.id,
-              downloadUrl: f['@microsoft.graph.downloadUrl'] || null
-            }
-          }
-        })
+  if (f.name.endsWith('.webp')) {
+    banners[f.name] = {
+      filename: f.name,
+      itemId: f.id,
+      downloadUrl: f['@microsoft.graph.downloadUrl'] || null
+    }
+  }
+})
       }
     } catch (e) {
       console.log('No banners found:', e.message)
@@ -178,7 +177,6 @@ export async function POST(req) {
         if (exhibitFolder) {
           const files = await listFolder(exhibitFolder.id)
           staticExhibits = groupStaticExhibits(files)
-          console.log(`Found ${staticExhibits.length} static exhibits in /${folderName}/`)
           break
         }
       } catch (e) {
@@ -188,7 +186,6 @@ export async function POST(req) {
 
     // ── EXHIBITS INTERACTIVOS (desde la raíz del proyecto) ───────────────────
     const interactiveExhibits = groupInteractiveExhibits(rootFiles)
-    console.log(`Found ${interactiveExhibits.length} interactive exhibits in root`)
 
     // ── COMBINAR todos los exhibits con su tipo ───────────────────────────────
     // Los interactivos y los estáticos se mantienen separados

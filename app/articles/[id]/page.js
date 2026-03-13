@@ -60,28 +60,47 @@ export default function ArticlePage() {
     if (error) setError('Artículo no encontrado')
     else {
       setArticle(data)
-      if (data?.related_resources?.some(r => !r.meta_description)) fetchRelatedMeta(data)
+      // Do not auto-fetch meta descriptions to keep initial processing lightweight.
+    // Users can fetch meta on demand via the Related Content section.
     }
     setLoadingArticle(false)
   }
 
-  const fetchRelatedMeta = async (articleData) => {
-    setFetchingMeta(true)
+  const [metaLoading, setMetaLoading] = useState({})
+
+  const fetchMetaForResource = async (index) => {
+    const resource = article.related_resources?.[index]
+    if (!resource) return
+
+    const url = getDisplayUrl(resource.original_url || resource.url)
+    if (!url) return
+
+    setMetaLoading(prev => ({ ...prev, [index]: true }))
     try {
-      const urls = articleData.related_resources.map(r => r.url)
       const res = await fetch('/api/fetch-meta', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls })
+        body: JSON.stringify({ urls: [url] })
       })
       const { results } = await res.json()
-      const updated = articleData.related_resources.map(r => {
-        const meta = results.find(m => m.url === r.url)
-        return { ...r, meta_description: meta?.metaDescription || r.meta_description || '', title: r.title || meta?.title || '' }
-      })
-      await supabase.from('articles').update({ related_resources: updated }).eq('id', id)
-      setArticle(prev => ({ ...prev, related_resources: updated }))
-    } catch (e) { console.error('Error fetching meta:', e) }
-    setFetchingMeta(false)
+      const meta = results?.[0]
+      if (meta) {
+        const updated = (article.related_resources || []).map((r, i) => {
+          if (i !== index) return r
+          return {
+            ...r,
+            meta_description: r.meta_description && r.meta_description.trim().length > 0
+              ? r.meta_description
+              : (meta.metaDescription || ''),
+            title: r.title && r.title.trim().length > 0 ? r.title : (meta.title || '')
+          }
+        })
+        await supabase.from('articles').update({ related_resources: updated }).eq('id', id)
+        setArticle(prev => ({ ...prev, related_resources: updated }))
+      }
+    } catch (e) {
+      console.error('Error fetching meta:', e)
+    }
+    setMetaLoading(prev => ({ ...prev, [index]: false }))
   }
 
   const refreshAssets = async () => {
@@ -125,7 +144,30 @@ export default function ArticlePage() {
       return ''
     }).join('\n')
 
-    const payload = {
+    // Build exhibits asset list
+    const exhibitAssets = []
+    if (exhibitPaths) {
+      const { statics = [], interactives = [] } = exhibitPaths
+      statics.forEach(e => {
+        if (e.desktop?.downloadUrl) exhibitAssets.push({ url: e.desktop.downloadUrl, filename: e.desktop.filename })
+        if (e.mobile?.downloadUrl) exhibitAssets.push({ url: e.mobile.downloadUrl, filename: e.mobile.filename })
+      })
+      interactives.forEach(e => {
+        if (e.json?.downloadUrl) exhibitAssets.push({ url: e.json.downloadUrl, filename: e.json.filename })
+      })
+    }
+
+    // Build banners asset list — only .webp files
+    const bannerAssets = []
+    if (article.banner_paths) {
+      Object.values(article.banner_paths).forEach(b => {
+        if (b?.downloadUrl && b?.filename?.endsWith('.webp')) {
+          bannerAssets.push({ url: b.downloadUrl, filename: b.filename })
+        }
+      })
+    }
+
+    const cfPayload = {
       properties: {
         'cq:model': '/conf/global/settings/dam/cfm/models/blog-post-test',
         'title': article.headline,
@@ -138,13 +180,71 @@ export default function ArticlePage() {
       }
     }
 
-    // Generar script en dos pasos: primero guarda el payload, luego hace el POST
-    // Esto evita problemas de escaping al incrustar JSON dentro de un string
-    const payloadJson = JSON.stringify(payload)
-      .replace(/\\/g, '\\\\')
-      .replace(/`/g, '\\`')
+    const exhibitsJson = JSON.stringify(exhibitAssets).replace(/\\/g, '\\\\').replace(/`/g, '\\`')
+    const bannersJson = JSON.stringify(bannerAssets).replace(/\\/g, '\\\\').replace(/`/g, '\\`')
+    const cfJson = JSON.stringify(cfPayload).replace(/\\/g, '\\\\').replace(/`/g, '\\`')
+    const slug = article.slug
+    const title = article.headline
 
-    const script = `var _p = JSON.parse(\`${payloadJson}\`);fetch('/libs/granite/csrf/token.json').then(r=>r.json()).then(d=>fetch('/api/assets/test-fragments/${article.slug}',{method:'POST',headers:{'Content-Type':'application/json','CSRF-Token':d.token},body:JSON.stringify(_p)}).then(r=>{console.log('Status:',r.status);return r.text()}).then(t=>console.log(t)))`
+    const script = `
+(async () => {
+  const token = (await fetch('/libs/granite/csrf/token.json').then(r=>r.json())).token;
+  const h = { 'Content-Type': 'application/json', 'CSRF-Token': token };
+  const base = '/api/assets/test-fragments/blog-posts';
+
+  // Helper: upload a file from URL to AEM path
+  async function uploadAsset(url, destPath) {
+    try {
+      const blob = await fetch(url).then(r => r.blob());
+      const fd = new FormData();
+      fd.append('file', blob, destPath.split('/').pop());
+      fd.append('fileName', destPath.split('/').pop());
+      const r = await fetch(destPath, { method: 'POST', headers: { 'CSRF-Token': token }, body: fd });
+      return r.status;
+    } catch(e) { return e.message; }
+  }
+
+  // Helper: create folder
+  async function createFolder(path, title) {
+    const r = await fetch(path, { method: 'POST', headers: h, body: JSON.stringify({ class: 'assetFolder', properties: { title } }) });
+    return r.status;
+  }
+
+  // 1. Create article folder
+  let s = await createFolder(\`\${base}/${slug}\`, \`${title}\`);
+  console.log('1. Article folder:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
+
+  // 2. Create exhibits subfolder
+  s = await createFolder(\`\${base}/${slug}/exhibits\`, 'Exhibits');
+  console.log('2. Exhibits folder:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
+
+  // 3. Create banners subfolder
+  s = await createFolder(\`\${base}/${slug}/banners\`, 'Banners');
+  console.log('3. Banners folder:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
+
+  // 4. Create Content Fragment
+  s = await fetch(\`\${base}/${slug}/${slug}\`, { method: 'POST', headers: h, body: \`${cfJson}\` }).then(r=>r.status);
+  console.log('4. Content Fragment:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
+
+  // 5. Upload exhibits
+  const exhibits = JSON.parse(\`${exhibitsJson}\`);
+  console.log(\`5. Uploading \${exhibits.length} exhibit(s)...\`);
+  for (const a of exhibits) {
+    s = await uploadAsset(a.url, \`\${base}/${slug}/exhibits/\${a.filename}\`);
+    console.log(\`   \${a.filename}:\`, s, s===201?'✅':s===409?'⚠ Exists':'❌');
+  }
+
+  // 6. Upload banners
+  const banners = JSON.parse(\`${bannersJson}\`);
+  console.log(\`6. Uploading \${banners.length} banner(s)...\`);
+  for (const a of banners) {
+    s = await uploadAsset(a.url, \`\${base}/${slug}/banners/\${a.filename}\`);
+    console.log(\`   \${a.filename}:\`, s, s===201?'✅':s===409?'⚠ Exists':'❌');
+  }
+
+  console.log('\\n✅ Done! View at: /ui#/aem/assets.html/content/dam/test-fragments/blog-posts/${slug}');
+})();
+`.trim()
 
     setPublishScript(script)
     setShowPublishScript(true)
@@ -152,7 +252,7 @@ export default function ArticlePage() {
 
   if (loading || loadingArticle) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif' }}>
-      <p style={{ color: '#999' }}>Loading...</p>
+      <p style={{ color: '#999' }}>Cargando...</p>
     </div>
   )
   if (error) return (
@@ -165,6 +265,52 @@ export default function ArticlePage() {
   const STATUS_LABELS = { 'in-progress': 'In Progress', 'in-review': 'In Review', 'approved': 'Approved', 'published': 'Published' }
   const STATUS_COLORS = { 'in-progress': '#a87a1a', 'in-review': '#1a6fa8', 'approved': '#1a8a4a', 'published': '#555' }
   const wordTags = article.tags?.all_tags || []
+  const getAemPath = (url) => {
+    if (!url) return url
+    // Already an AEM path
+    if (url.startsWith('/content/')) return url
+
+    try {
+      const parsed = new URL(url, 'https://www.msci.com')
+      const hostname = parsed.hostname.toLowerCase()
+      const pathname = parsed.pathname
+
+      // External URLs remain absolute
+      if (!hostname.endsWith('msci.com')) return url
+      if (hostname === 'support.msci.com') return url
+
+      // /indexes/index/[NUMERIC_ID] stays absolute
+      if (pathname.startsWith('/indexes/index/')) return url
+
+      // /indexes/... → /content/ipc/us/en/indexes/...
+      if (pathname.startsWith('/indexes/')) return `/content/ipc/us/en${pathname}`
+
+      // Default → /content/msci/us/en/...
+      return `/content/msci/us/en${pathname}`
+    } catch {
+      return url
+    }
+  }
+
+  const getDisplayUrl = (url) => {
+    if (!url) return ''
+
+    // If already an AEM path, reconstruct msci.com link
+    if (url.startsWith('/content/ipc/us/en/indexes')) {
+      return `https://www.msci.com${url.replace('/content/ipc/us/en', '/indexes')}`
+    }
+    if (url.startsWith('/content/msci/us/en')) {
+      return `https://www.msci.com${url.replace('/content/msci/us/en', '')}`
+    }
+
+    // If it's a relative path, assume msci.com base
+    if (url.startsWith('/')) {
+      return `https://www.msci.com${url}`
+    }
+
+    return url
+  }
+
   const exhibitPaths = article.exhibit_paths || null
 
   const exhibitOptions = exhibitPaths?.summary?.map((e, i) => ({
@@ -248,7 +394,7 @@ export default function ArticlePage() {
           {activeTab === 'overview' && (
             <div style={{ display: 'grid', gap: '1rem' }}>
 
-              <Section title="Title">
+              <Section title="Título">
                 <FieldRow value={article.headline} bold copied={copied['headline']} onCopy={() => copy('headline', article.headline)} />
               </Section>
 
@@ -256,7 +402,7 @@ export default function ArticlePage() {
                 <FieldRow value={article.slug} mono copied={copied['slug']} onCopy={() => copy('slug', article.slug)} />
               </Section>
 
-              <Section title="Final URL">
+              <Section title="URL Final">
                 <FieldRow value={article.final_url} mono copied={copied['url']} onCopy={() => copy('url', article.final_url)} />
               </Section>
 
@@ -281,7 +427,7 @@ export default function ArticlePage() {
                       ))}
                     </div>
                     <p style={{ fontSize: '0.75rem', color: '#999', margin: 0 }}>
-                      💡 Click each tag to copy it individually, or use "Copy all".
+                      💡 Click each tag to copy individually, or use "Copy all".
                     </p>
                   </>
                 ) : (
@@ -328,7 +474,7 @@ export default function ArticlePage() {
               </Section>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <Section title="Status">
+                <Section title="Estado">
                   <select value={article.status}
                     onChange={async e => {
                       const { data } = await supabase.from('articles').update({ status: e.target.value }).eq('id', id).select().single()
@@ -378,7 +524,7 @@ export default function ArticlePage() {
 
                 if (block.type === 'text') {
                   return (
-                    <Section key={blockIdx} title={`Text Block ${blockIdx + 1}`}>
+                    <Section key={blockIdx} title="Bloque de texto">
                       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem' }}>
                         <CopyBtn label="Copy HTML" copied={copied[`block_${blockIdx}`]}
                           onCopy={() => copy(`block_${blockIdx}`, block.html)} />
@@ -437,7 +583,7 @@ export default function ArticlePage() {
                               </span>
                               {block.match_confidence === 'low' && (
                                 <span style={{ fontSize: '0.72rem', color: '#a87a1a', fontWeight: '600' }}>
-                                  ⚠ Match incierto — verifica el archivo
+                                  ⚠ Uncertain match — verify file
                                 </span>
                               )}
                             </div>
@@ -486,7 +632,7 @@ export default function ArticlePage() {
                         {exhibitOptions.length > 0 && (
                           <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e0e0e0' }}>
                             <label style={{ fontSize: '0.72rem', color: '#999', display: 'block', marginBottom: '0.35rem', fontWeight: '600', textTransform: 'uppercase' }}>
-                              Asignar archivo manualmente
+                              Assign file manually
                             </label>
                             <select
                               value={overrideIdx ?? resolvedIdx ?? ''}
@@ -541,11 +687,20 @@ export default function ArticlePage() {
               )}
 
               {/* Related Content */}
-              <Section title={fetchingMeta ? 'Related Content — fetching meta descriptions...' : 'Related Content'}>
-                {article.related_resources?.length > 0 ? (
-                  <div style={{ display: 'grid', gap: '1rem' }}>
-                    {article.related_resources.map((r, i) => (
-                      <div key={i} style={{ padding: '1rem', backgroundColor: '#fafafa', borderRadius: '6px', border: '1px solid #e5e5e5' }}>
+                    <Section title={fetchingMeta ? 'Related Content — fetching meta descriptions...' : 'Related Content'}>
+                    {article.related_warning && (
+                        <div style={{
+                        marginBottom: '1rem', padding: '0.6rem 0.75rem',
+                        backgroundColor: '#fffbeb', border: '1px solid #fcd34d',
+                        borderRadius: '6px', fontSize: '0.8rem', color: '#92400e', fontWeight: '500'
+                        }}>
+                        ⚠ {article.related_warning}
+                        </div>
+                    )}
+                    {article.related_resources?.length > 0 ? (
+                        <div style={{ display: 'grid', gap: '1rem' }}>
+                        {article.related_resources.map((r, i) => (
+                        <div key={i} style={{ padding: '1rem', backgroundColor: '#fafafa', borderRadius: '6px', border: '1px solid #e5e5e5' }}>
                         <div style={{ marginBottom: '0.75rem' }}>
                           <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>Title</label>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -556,17 +711,39 @@ export default function ArticlePage() {
                         <div style={{ marginBottom: '0.75rem' }}>
                           <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>Meta Description</label>
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-                            <span style={{ flex: 1, fontSize: '0.85rem', color: '#555', lineHeight: '1.5' }}>
-                              {r.meta_description || (fetchingMeta ? '⏳ Cargando...' : '—')}
+                            <span style={{ flex: 1, fontSize: '0.85rem', color: r.meta_description ? '#555' : '#cc0000', lineHeight: '1.5', fontStyle: r.meta_description ? 'normal' : 'italic' }}>
+                              {r.meta_description || '⚠ No meta description available yet.'}
                             </span>
+                            {!r.meta_description && (
+                              <button
+                                onClick={() => fetchMetaForResource(i)}
+                                disabled={metaLoading[i]}
+                                style={{
+                                  padding: '0.3rem 0.6rem', borderRadius: '4px', border: '1px solid #ddd',
+                                  backgroundColor: metaLoading[i] ? '#f0f0f0' : 'white', cursor: metaLoading[i] ? 'not-allowed' : 'pointer',
+                                  fontSize: '0.75rem', fontWeight: '600', color: '#111'
+                                }}
+                              >
+                                {metaLoading[i] ? 'Fetching…' : 'Fetch meta'}
+                              </button>
+                            )}
                             {r.meta_description && <CopyBtn copied={copied[`rm_${i}`]} onCopy={() => copy(`rm_${i}`, r.meta_description)} />}
                           </div>
                         </div>
                         <div style={{ marginBottom: '0.75rem' }}>
-                          <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>AEM URL</label>
+                          <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>Original URL</label>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <code style={{ flex: 1, fontSize: '0.8rem', fontFamily: 'monospace', color: '#555', wordBreak: 'break-all' }}>{r.url}</code>
-                            <CopyBtn copied={copied[`ru_${i}`]} onCopy={() => copy(`ru_${i}`, r.url)} />
+                            <a href={getDisplayUrl(r.original_url || r.url)} target="_blank" rel="noreferrer" style={{ flex: 1, fontSize: '0.8rem', color: '#0066cc', wordBreak: 'break-all' }}>
+                              {getDisplayUrl(r.original_url || r.url)}
+                            </a>
+                            <CopyBtn copied={copied[`ro_${i}`]} onCopy={() => copy(`ro_${i}`, getDisplayUrl(r.original_url || r.url))} />
+                          </div>
+                        </div>
+                        <div style={{ marginBottom: '0.75rem' }}>
+                          <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>AEM Path</label>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <code style={{ flex: 1, fontSize: '0.8rem', fontFamily: 'monospace', color: '#1a6fa8', wordBreak: 'break-all' }}>{r.aem_path || getAemPath(r.original_url || r.url)}</code>
+                            <CopyBtn copied={copied[`ru_${i}`]} onCopy={() => copy(`ru_${i}`, r.aem_path || getAemPath(r.original_url || r.url))} />
                           </div>
                         </div>
                         <div>
@@ -600,7 +777,7 @@ export default function ArticlePage() {
                     padding: '0.45rem 1rem', borderRadius: '4px', cursor: refreshing ? 'not-allowed' : 'pointer',
                     fontSize: '0.8rem', fontWeight: '600', whiteSpace: 'nowrap'
                   }}>
-                    {refreshing ? '⏳ Refrescando...' : '🔄 Refresh assets'}
+                    {refreshing ? '⏳ Refreshing...' : '🔄 Refresh assets'}
                   </button>
                 </div>
               </div>
@@ -609,7 +786,7 @@ export default function ArticlePage() {
               <div style={{ marginTop: '0.5rem', borderTop: '1px solid #e5e5e5', paddingTop: '1.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
                   <div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: '600', color: '#111', marginBottom: '0.25rem' }}>Export and Publish</div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: '600', color: '#111', marginBottom: '0.25rem' }}>Export & Publish</div>
                     <div style={{ fontSize: '0.75rem', color: '#999' }}>Generate a script ready to run in the AEM console</div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>

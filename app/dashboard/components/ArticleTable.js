@@ -99,7 +99,7 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
             <option value="in-progress">In Progress</option>
             <option value="in-review">In Review</option>
             <option value="approved">Approved</option>
-            <option value="published">Publicado</option>
+            <option value="published">Published</option>
           </select>
         </div>
 
@@ -124,8 +124,8 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
           <div style={{ padding: '3rem', textAlign: 'center' }}>
             <p style={{ color: '#999', fontSize: '0.9rem', margin: 0 }}>
               {articles.length === 0
-                ? 'No hay artículos todavía. Crea el primero con "+ New Article".'
-                : 'No se encontraron artículos con esos filtros.'}
+                ? 'No articles yet. Create one with "+ New Article".'
+                : 'No articles found for those filters.'}
             </p>
           </div>
         ) : (
@@ -174,7 +174,7 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
                     {a.assigned_to_email || '—'}
                   </td>
                   <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', color: '#666' }}>
-                    {a.created_at ? new Date(a.created_at).toLocaleDateString('es-MX') : '—'}
+                    {a.created_at ? new Date(a.created_at).toLocaleDateString('en-US') : '—'}
                   </td>
                   <td style={{ padding: '0.85rem 0.75rem', textAlign: 'right' }}>
                     <button
@@ -201,7 +201,7 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
       {/* Count */}
       {articles.length > 0 && (
         <p style={{ fontSize: '0.8rem', color: '#999', marginTop: '0.75rem', textAlign: 'right' }}>
-          {filtered.length} de {articles.length} artículos
+          {filtered.length} of {articles.length} articles
         </p>
       )}
 

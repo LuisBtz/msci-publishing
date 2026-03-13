@@ -11,49 +11,92 @@ async function extractDocxXml(buffer) {
   return docXml
 }
 
-// Extrae footnotes/endnotes directamente del XML de Word
 async function extractFootnotesFromDocx(buffer) {
   const zip = await JSZip.loadAsync(buffer)
-
-  // Word usa footnotes.xml o endnotes.xml
   const footnoteFile = zip.file('word/footnotes.xml')
   const endnoteFile = zip.file('word/endnotes.xml')
-
   const results = []
 
-  for (const [file, label] of [[footnoteFile, 'footnote'], [endnoteFile, 'endnote']]) {
+  for (const [file] of [[footnoteFile], [endnoteFile]]) {
     if (!file) continue
     const xml = await file.async('string')
-
-    // Cada footnote/endnote es un w:footnote o w:endnote con w:id
     const noteRegex = /<w:(?:footnote|endnote)\s[^>]*w:id="(\d+)"[^>]*>([\s\S]*?)<\/w:(?:footnote|endnote)>/g
     let match
-
     while ((match = noteRegex.exec(xml)) !== null) {
       const noteId = parseInt(match[1])
-      // Ignorar IDs 0 y -1 (son notas de separador internas de Word)
       if (noteId <= 0) continue
-
       const noteXml = match[2]
-
-      // Extraer texto limpiando tags XML
       let text = noteXml
-        .replace(/<w:rPr[^>]*>[\s\S]*?<\/w:rPr>/g, '') // quitar formato
-        .replace(/<w:footnoteRef\/>|<w:endnoteRef\/>/g, '') // quitar ref marker
-        .replace(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g, '$1') // extraer texto de w:t
-        .replace(/<[^>]+>/g, '') // quitar resto de tags
+        .replace(/<w:rPr[^>]*>[\s\S]*?<\/w:rPr>/g, '')
+        .replace(/<w:footnoteRef\/>|<w:endnoteRef\/>/g, '')
+        .replace(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g, '$1')
+        .replace(/<[^>]+>/g, '')
         .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#xD;/g, '')
         .replace(/\s+/g, ' ').trim()
-
-      if (text) {
-        results.push({ number: noteId, text })
-      }
+      if (text) results.push({ number: noteId, text })
     }
   }
 
-    // Ordenar por número y re-numerar desde 1 (Word guarda un separador en ID 1)
-    results.sort((a, b) => a.number - b.number)
-    return results.map((f, i) => ({ ...f, number: i + 1 }))
+  results.sort((a, b) => a.number - b.number)
+  return results.map((f, i) => ({ ...f, number: i + 1 }))
+}
+
+// NEW: Extrae hyperlinks reales del XML del docx (text visible → URL completa)
+async function extractHyperlinksFromDocx(buffer) {
+  const zip = await JSZip.loadAsync(buffer)
+
+  const relsFile = zip.file('word/_rels/document.xml.rels')
+  if (!relsFile) return []
+
+  const relsXml = await relsFile.async('string')
+
+  // Mapa rId → URL target
+  const relsMap = {}
+  const relRegex = /<Relationship\s+Id="([^"]+)"\s+[^>]*Target="([^"]+)"[^>]*\/?>/g
+  let m
+  while ((m = relRegex.exec(relsXml)) !== null) {
+    relsMap[m[1]] = m[2]
+  }
+
+  const docXml = await zip.file('word/document.xml').async('string')
+  const links = []
+  const hyperlinkRegex = /<w:hyperlink\s[^>]*r:id="([^"]+)"[^>]*>([\s\S]*?)<\/w:hyperlink>/g
+
+  while ((m = hyperlinkRegex.exec(docXml)) !== null) {
+    const rId = m[1]
+    const innerXml = m[2]
+    const url = relsMap[rId]
+
+    if (!url || !url.startsWith('http')) continue
+
+    const text = innerXml
+      .replace(/<w:rPr[^>]*>[\s\S]*?<\/w:rPr>/g, '')
+      .replace(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g, '$1')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (text && url) {
+      links.push({ text, url })
+    }
+  }
+
+  return links
+}
+
+function toAemPath(url) {
+  if (!url) return url
+  try {
+    const u = new URL(url)
+    if (!u.hostname.includes('msci.com')) return url
+    if (u.hostname.includes('support.msci.com')) return url
+    const path = u.pathname
+    if (/\/indexes\/index\/\d+/.test(path)) return url
+    if (path.startsWith('/indexes/')) return `/content/ipc/us/en${path}`
+    return `/content/msci/us/en${path}`
+  } catch {
+    return url
+  }
 }
 
 function extractTagsFromXml(xml) {
@@ -63,14 +106,9 @@ function extractTagsFromXml(xml) {
   const tagsXml = xml.substring(tagsStart, placementEnd === -1 ? tagsStart + 50000 : placementEnd)
   return tagsXml
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#9746;/g, '☒')
-    .replace(/&#9744;/g, '☐')
-    .replace(/\s+/g, ' ')
-    .trim()
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&#9746;/g, '☒').replace(/&#9744;/g, '☐')
+    .replace(/\s+/g, ' ').trim()
 }
 
 function extractMetaSection(text) {
@@ -94,10 +132,7 @@ function extractEndSection(text) {
 
 function parseJson(raw) {
   const cleaned = raw
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```\s*$/i, '')
-    .trim()
+    .replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim()
   try {
     return JSON.parse(cleaned)
   } catch {
@@ -117,7 +152,6 @@ export async function POST(req) {
     const file = formData.get('file')
     if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 })
 
-    // Exhibits pasados desde el modal (clasificados por SharePoint route)
     const exhibitsSummaryRaw = formData.get('exhibits')
     const exhibitsSummary = exhibitsSummaryRaw ? JSON.parse(exhibitsSummaryRaw) : null
 
@@ -128,14 +162,13 @@ export async function POST(req) {
     const docXml = await extractDocxXml(buffer)
     const tagsText = extractTagsFromXml(docXml)
 
-    // Extraer footnotes directamente del XML de Word
     const footnotesFromXml = await extractFootnotesFromDocx(buffer)
+    const hyperlinksFromDocx = await extractHyperlinksFromDocx(buffer) // NEW
 
     const metaSection = extractMetaSection(docText)
     const bodySection = extractBodySection(docText)
     const endSection = extractEndSection(docText)
 
-    // Construir el contexto de exhibits para Claude
     const exhibitsContext = exhibitsSummary?.summary?.length
       ? `\nEXHIBITS AVAILABLE IN SHAREPOINT (in order):
 ${exhibitsSummary.summary.map((e, i) =>
@@ -145,7 +178,13 @@ ${exhibitsSummary.summary.map((e, i) =>
 ).join('\n')}`
       : '\nNo exhibits found in SharePoint for this project.'
 
-    // ── LLAMADA 1: contenido principal + matching de exhibits ─────────────────
+    // NEW: Contexto de hyperlinks para Claude
+    const hyperlinksContext = hyperlinksFromDocx.length
+      ? `\nHYPERLINKS EXTRACTED FROM DOCUMENT (use these exact URLs — do not truncate or reconstruct):
+${hyperlinksFromDocx.map((l, i) => `${i + 1}. text: "${l.text}" | url: "${l.url}"`).join('\n')}`
+      : ''
+
+    // ── LLAMADA 1 ─────────────────────────────────────────────────────────────
     const message1 = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 6000,
@@ -181,6 +220,7 @@ Extract these fields:
     - any other msci.com URL → /content/msci/us/en/[path]
     - support.msci.com → keep absolute
     - external URLs → keep absolute + target="_blank"
+  * For body links: look up the anchor text in the HYPERLINKS list and use the full URL from there
   * Group consecutive paragraphs together into ONE text block
   * STOP the text block when you hit an image reference (![](media/imageN.png))
   * Do NOT include exhibit titles or captions in text blocks
@@ -200,6 +240,8 @@ ${exhibitsContext}
 - footnotes: array of {number: int, text: string} from end of document. Preserve <em> and links.
 
 - related_resources: array of {title: string, url: string, cta_label: string} from END SECTION "Related resources:".
+  IMPORTANT: For each related resource, match the title or link text to the HYPERLINKS list below and use the full URL from there.
+  Never truncate or reconstruct URLs — always use the exact URL from the HYPERLINKS list.
   cta_label: "Read more" blogs/papers, "Learn more" podcasts, "Explore more" products/indexes/frameworks.
 
 - sharepoint_folder_url: null
@@ -212,6 +254,7 @@ ${bodySection}
 
 END SECTION:
 ${endSection}
+${hyperlinksContext}
 
 Return ONLY the JSON object.`
       }]
@@ -264,31 +307,18 @@ Return ONLY: {"all_tags": ["Tag 1", "Tag 2", ...]}`
     if (parsed.body_blocks && exhibitsSummary) {
       parsed.body_blocks = parsed.body_blocks.map(block => {
         if (block.type !== 'exhibit') return block
-
         const idx = block.sharepoint_index
         const summaryItem = exhibitsSummary.summary?.[idx]
-
         if (!summaryItem) return { ...block, sharepoint_data: null }
-
         if (summaryItem.type === 'static') {
           const staticData = exhibitsSummary.statics?.[idx]
-          return {
-            ...block,
-            sharepoint_data: staticData || null,
-            exhibit_type: 'static'
-          }
+          return { ...block, sharepoint_data: staticData || null, exhibit_type: 'static' }
         }
-
         if (summaryItem.type === 'interactive') {
           const interactiveIdx = idx - (exhibitsSummary.statics?.length || 0)
           const interactiveData = exhibitsSummary.interactives?.[interactiveIdx]
-          return {
-            ...block,
-            sharepoint_data: interactiveData || null,
-            exhibit_type: 'interactive'
-          }
+          return { ...block, sharepoint_data: interactiveData || null, exhibit_type: 'interactive' }
         }
-
         return block
       })
     }
@@ -328,10 +358,30 @@ Return ONLY: {"all_tags": ["Tag 1", "Tag 2", ...]}`
       }
     })
 
-    // Usar footnotes del XML si Claude no los extrajo correctamente
     const finalFootnotes = footnotesFromXml.length > 0 ? footnotesFromXml : (parsed.footnotes || [])
 
-    return NextResponse.json({ ...parsed, authors, tags, slug, final_url, footnotes: finalFootnotes })
+    // Apply AEM path rules to related resources — max 3
+const allRelated = (parsed.related_resources || []).map(r => ({
+  ...r,
+  original_url: r.url,
+  aem_path: toAemPath(r.url)
+}))
+
+const relatedResources = allRelated.slice(0, 3)
+const relatedWarning = allRelated.length > 3
+  ? `The document contained ${allRelated.length} related resources. Only the first 3 were included.`
+  : null
+
+return NextResponse.json({
+  ...parsed,
+  related_resources: relatedResources,
+  related_warning: relatedWarning,
+  authors,
+  tags,
+  slug,
+  final_url,
+  footnotes: finalFootnotes
+})
 
   } catch (err) {
     console.error('Parse error:', err)
