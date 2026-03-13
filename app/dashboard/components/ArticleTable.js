@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 const TYPE_LABELS = {
   'blog-post': 'Blog Post',
@@ -40,10 +41,12 @@ function Badge({ label, style }) {
   )
 }
 
-export default function ArticleTable({ articles, onNewArticle }) {
+export default function ArticleTable({ articles, onNewArticle, onDelete }) {
+  const router = useRouter()
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [deleteModal, setDeleteModal] = useState(null)
 
   const filtered = articles.filter(a => {
     const matchSearch = a.headline?.toLowerCase().includes(search.toLowerCase())
@@ -60,7 +63,6 @@ export default function ArticleTable({ articles, onNewArticle }) {
         alignItems: 'center', marginBottom: '1.25rem', gap: '1rem', flexWrap: 'wrap'
       }}>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', flex: 1 }}>
-          {/* Search */}
           <input
             type="text"
             placeholder="Buscar por título..."
@@ -71,7 +73,6 @@ export default function ArticleTable({ articles, onNewArticle }) {
               fontSize: '0.85rem', minWidth: '220px', outline: 'none'
             }}
           />
-          {/* Filter tipo */}
           <select
             value={filterType}
             onChange={e => setFilterType(e.target.value)}
@@ -86,7 +87,6 @@ export default function ArticleTable({ articles, onNewArticle }) {
             <option value="quick-take">Quick Take</option>
             <option value="podcast">Podcast</option>
           </select>
-          {/* Filter status */}
           <select
             value={filterStatus}
             onChange={e => setFilterStatus(e.target.value)}
@@ -103,7 +103,6 @@ export default function ArticleTable({ articles, onNewArticle }) {
           </select>
         </div>
 
-        {/* New Article button */}
         <button
           onClick={onNewArticle}
           style={{
@@ -133,8 +132,8 @@ export default function ArticleTable({ articles, onNewArticle }) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #e5e5e5', backgroundColor: '#fafafa' }}>
-                {['Título', 'Tipo', 'Estado', 'Asignado a', 'Fecha creación'].map(h => (
-                  <th key={h} style={{
+                {['Título', 'Tipo', 'Estado', 'Asignado a', 'Fecha creación', ''].map((h, i) => (
+                  <th key={i} style={{
                     padding: '0.75rem 1rem', textAlign: 'left',
                     fontSize: '0.75rem', fontWeight: '700', color: '#666',
                     textTransform: 'uppercase', letterSpacing: '0.05em'
@@ -148,6 +147,7 @@ export default function ArticleTable({ articles, onNewArticle }) {
               {filtered.map((a, i) => (
                 <tr
                   key={a.id}
+                  onClick={() => router.push(`/articles/${a.id}`)}
                   style={{
                     borderBottom: i < filtered.length - 1 ? '1px solid #f0f0f0' : 'none',
                     cursor: 'pointer', transition: 'background 0.1s'
@@ -176,6 +176,21 @@ export default function ArticleTable({ articles, onNewArticle }) {
                   <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', color: '#666' }}>
                     {a.created_at ? new Date(a.created_at).toLocaleDateString('es-MX') : '—'}
                   </td>
+                  <td style={{ padding: '0.85rem 0.75rem', textAlign: 'right' }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setDeleteModal({ id: a.id, headline: a.headline })
+                      }}
+                      style={{
+                        background: 'none', border: '1px solid #ffcccc', color: '#cc0000',
+                        padding: '0.3rem 0.6rem', borderRadius: '4px', cursor: 'pointer',
+                        fontSize: '0.75rem', fontWeight: '600'
+                      }}
+                    >
+                      Eliminar
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -188,6 +203,54 @@ export default function ArticleTable({ articles, onNewArticle }) {
         <p style={{ fontSize: '0.8rem', color: '#999', marginTop: '0.75rem', textAlign: 'right' }}>
           {filtered.length} de {articles.length} artículos
         </p>
+      )}
+
+      {/* Modal de confirmación de eliminación */}
+      {deleteModal && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 300, padding: '1rem'
+        }}>
+          <div style={{
+            backgroundColor: 'white', borderRadius: '8px', padding: '2rem',
+            width: '100%', maxWidth: '420px', boxShadow: '0 20px 60px rgba(0,0,0,0.2)'
+          }}>
+            <div style={{ fontSize: '2rem', textAlign: 'center', marginBottom: '1rem' }}>🗑️</div>
+            <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: '700', textAlign: 'center' }}>
+              ¿Eliminar artículo?
+            </h3>
+            <p style={{ margin: '0 0 1.5rem', fontSize: '0.9rem', color: '#666', textAlign: 'center', lineHeight: '1.5' }}>
+              <strong>"{deleteModal.headline}"</strong><br />
+              Esta acción no se puede deshacer.
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <button
+                onClick={() => setDeleteModal(null)}
+                style={{
+                  flex: 1, padding: '0.65rem', border: '1px solid #ddd',
+                  borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem',
+                  backgroundColor: 'white', color: '#333'
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  onDelete(deleteModal.id)
+                  setDeleteModal(null)
+                }}
+                style={{
+                  flex: 1, padding: '0.65rem', border: 'none',
+                  borderRadius: '4px', cursor: 'pointer', fontSize: '0.9rem',
+                  fontWeight: '600', backgroundColor: '#cc0000', color: 'white'
+                }}
+              >
+                Sí, eliminar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

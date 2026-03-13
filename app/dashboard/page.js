@@ -2,11 +2,14 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/lib/useAuth'
 import { supabase } from '@/lib/supabase'
+import { useRouter } from 'next/navigation'
 import Header from './components/Header'
 import ArticleTable from './components/ArticleTable'
+import NewArticleModal from './components/NewArticleModal'
 
 export default function Dashboard() {
   const { user, loading } = useAuth()
+  const router = useRouter()
   const [articles, setArticles] = useState([])
   const [loadingArticles, setLoadingArticles] = useState(true)
   const [showNewModal, setShowNewModal] = useState(false)
@@ -24,6 +27,17 @@ export default function Dashboard() {
 
     if (!error) setArticles(data || [])
     setLoadingArticles(false)
+  }
+
+  const deleteArticle = async (id) => {
+    const { error } = await supabase
+      .from('articles')
+      .delete()
+      .eq('id', id)
+
+    if (!error) {
+      setArticles(prev => prev.filter(a => a.id !== id))
+    }
   }
 
   if (loading) return (
@@ -60,36 +74,13 @@ export default function Dashboard() {
           <ArticleTable
             articles={articles}
             onNewArticle={() => setShowNewModal(true)}
+            onDelete={deleteArticle}
           />
         )}
       </div>
 
-      {/* Modal placeholder — lo construimos mañana */}
       {showNewModal && (
-        <div style={{
-          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200
-        }}>
-          <div style={{
-            backgroundColor: 'white', borderRadius: '8px', padding: '2rem',
-            width: '100%', maxWidth: '500px', margin: '1rem'
-          }}>
-            <h2 style={{ margin: '0 0 1rem', fontSize: '1.1rem' }}>Nuevo Artículo</h2>
-            <p style={{ color: '#999', fontSize: '0.9rem' }}>
-              Lo construimos mañana — por ahora el modal abre correctamente ✅
-            </p>
-            <button
-              onClick={() => setShowNewModal(false)}
-              style={{
-                marginTop: '1rem', padding: '0.6rem 1.2rem', backgroundColor: 'black',
-                color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer',
-                fontSize: '0.85rem'
-              }}
-            >
-              Cerrar
-            </button>
-          </div>
-        </div>
+        <NewArticleModal onClose={() => setShowNewModal(false)} />
       )}
     </div>
   )
