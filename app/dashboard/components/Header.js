@@ -32,7 +32,7 @@ export default function Header({ user }) {
             cursor: 'pointer', fontSize: '0.8rem'
           }}
         >
-          Cerrar sesión
+          Sign Out
         </button>
       </div>
     </div>

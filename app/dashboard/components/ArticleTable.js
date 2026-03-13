@@ -17,10 +17,10 @@ const TYPE_COLORS = {
 }
 
 const STATUS_LABELS = {
-  'in-progress': 'En proceso',
-  'in-review': 'En revisión',
-  'approved': 'Aprobado',
-  'published': 'Publicado'
+  'in-progress': 'In Progress',
+  'in-review': 'In Review',
+  'approved': 'Approved',
+  'published': 'Published'
 }
 
 const STATUS_COLORS = {
@@ -65,7 +65,7 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', flex: 1 }}>
           <input
             type="text"
-            placeholder="Buscar por título..."
+            placeholder="Search by title..."
             value={search}
             onChange={e => setSearch(e.target.value)}
             style={{
@@ -81,7 +81,7 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
               fontSize: '0.85rem', backgroundColor: 'white', outline: 'none', cursor: 'pointer'
             }}
           >
-            <option value="all">Todos los tipos</option>
+            <option value="all">All types</option>
             <option value="blog-post">Blog Post</option>
             <option value="paper">Paper</option>
             <option value="quick-take">Quick Take</option>
@@ -95,10 +95,10 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
               fontSize: '0.85rem', backgroundColor: 'white', outline: 'none', cursor: 'pointer'
             }}
           >
-            <option value="all">Todos los estados</option>
-            <option value="in-progress">En proceso</option>
-            <option value="in-review">En revisión</option>
-            <option value="approved">Aprobado</option>
+            <option value="all">All statuses</option>
+            <option value="in-progress">In Progress</option>
+            <option value="in-review">In Review</option>
+            <option value="approved">Approved</option>
             <option value="published">Publicado</option>
           </select>
         </div>
@@ -132,7 +132,7 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #e5e5e5', backgroundColor: '#fafafa' }}>
-                {['Título', 'Tipo', 'Estado', 'Asignado a', 'Fecha creación', ''].map((h, i) => (
+                {['Title', 'Type', 'Status', 'Assigned to', 'Created at', ''].map((h, i) => (
                   <th key={i} style={{
                     padding: '0.75rem 1rem', textAlign: 'left',
                     fontSize: '0.75rem', fontWeight: '700', color: '#666',
@@ -188,7 +188,7 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
                         fontSize: '0.75rem', fontWeight: '600'
                       }}
                     >
-                      Eliminar
+                      Delete
                     </button>
                   </td>
                 </tr>
@@ -218,11 +218,11 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
           }}>
             <div style={{ fontSize: '2rem', textAlign: 'center', marginBottom: '1rem' }}>🗑️</div>
             <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem', fontWeight: '700', textAlign: 'center' }}>
-              ¿Eliminar artículo?
+              Delete Article?
             </h3>
             <p style={{ margin: '0 0 1.5rem', fontSize: '0.9rem', color: '#666', textAlign: 'center', lineHeight: '1.5' }}>
               <strong>"{deleteModal.headline}"</strong><br />
-              Esta acción no se puede deshacer.
+              This action cannot be undone.
             </p>
             <div style={{ display: 'flex', gap: '0.75rem' }}>
               <button
@@ -233,7 +233,7 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
                   backgroundColor: 'white', color: '#333'
                 }}
               >
-                Cancelar
+                Cancel
               </button>
               <button
                 onClick={() => {
@@ -246,7 +246,7 @@ export default function ArticleTable({ articles, onNewArticle, onDelete }) {
                   fontWeight: '600', backgroundColor: '#cc0000', color: 'white'
                 }}
               >
-                Sí, eliminar
+                Yes, delete
               </button>
             </div>
           </div>

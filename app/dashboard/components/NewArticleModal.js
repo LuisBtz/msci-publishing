@@ -18,7 +18,7 @@ export default function NewArticleModal({ onClose }) {
       setFile(f)
       setError('')
     } else {
-      setError('El archivo debe ser un .docx')
+      setError('The file must be a .docx')
       setFile(null)
     }
   }
@@ -30,7 +30,7 @@ export default function NewArticleModal({ onClose }) {
 
     try {
       // 1. Leer carpeta de SharePoint
-      setStatusMsg('Leyendo carpeta de SharePoint...')
+      setStatusMsg('Reading SharePoint folder...')
       const spRes = await fetch('/api/sharepoint/folder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -42,17 +42,17 @@ export default function NewArticleModal({ onClose }) {
       // Mostrar resumen de exhibits encontrados
       const { summary } = spData
       if (summary) {
-        setStatusMsg(`SharePoint leído — ${summary.statics} estáticos, ${summary.interactives} interactivos encontrados. Analizando documento...`)
+        setStatusMsg(`SharePoint read — ${summary.statics} statics, ${summary.interactives} interactives found. Analyzing document...`)
         await new Promise(r => setTimeout(r, 800))
       }
 
       if (!spData.exhibitsFound) {
-        setStatusMsg('⚠ No se encontraron exhibits — continuando...')
+        setStatusMsg('⚠ No exhibits found — continuing...')
         await new Promise(r => setTimeout(r, 1000))
       }
 
       // 2. Parsear el .docx con Claude
-      setStatusMsg('Claude está analizando el documento...')
+      setStatusMsg('Claude is analyzing the document...')
       const formData = new FormData()
 const binaryStr = atob(spData.docx.base64)
 const bytes = new Uint8Array(binaryStr.length)
@@ -72,7 +72,7 @@ const blob = new Blob([bytes], {
       if (!parseRes.ok) throw new Error(parseData.error || 'Error al parsear documento')
 
       // 3. Guardar en Supabase
-      setStatusMsg('Guardando artículo...')
+      setStatusMsg('Saving article...')
       const saveRes = await fetch('/api/articles/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -87,7 +87,7 @@ const blob = new Blob([bytes], {
       if (!saveRes.ok) throw new Error(saveData.error || 'Error al guardar')
 
       setStep('done')
-      setStatusMsg('¡Artículo creado correctamente!')
+      setStatusMsg('Article created successfully!')
       setTimeout(() => router.push(`/articles/${saveData.id}`), 1500)
 
     } catch (err) {
@@ -104,7 +104,7 @@ const blob = new Blob([bytes], {
     setError('')
 
     try {
-      setStatusMsg('Claude está analizando el documento...')
+      setStatusMsg('Claude is analyzing the document...')
       const formData = new FormData()
       formData.append('file', file)
       // Sin exhibits al subir manualmente
@@ -116,7 +116,7 @@ const blob = new Blob([bytes], {
       const parseData = await parseRes.json()
       if (!parseRes.ok) throw new Error(parseData.error || 'Error al parsear documento')
 
-      setStatusMsg('Guardando artículo...')
+      setStatusMsg('Saving article...')
       const saveRes = await fetch('/api/articles/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -126,7 +126,7 @@ const blob = new Blob([bytes], {
       if (!saveRes.ok) throw new Error(saveData.error || 'Error al guardar')
 
       setStep('done')
-      setStatusMsg('¡Artículo creado correctamente!')
+      setStatusMsg('Article created successfully!')
       setTimeout(() => router.push(`/articles/${saveData.id}`), 1500)
 
     } catch (err) {
@@ -151,7 +151,7 @@ const blob = new Blob([bytes], {
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700' }}>Nuevo Artículo</h2>
+          <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700' }}>New Article</h2>
           <button onClick={onClose} disabled={loading}
             style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: loading ? 'not-allowed' : 'pointer', color: '#999' }}>
             ✕
@@ -167,7 +167,7 @@ const blob = new Blob([bytes], {
             }}>
               {[
                 { id: 'sharepoint', label: '📁 SharePoint' },
-                { id: 'manual', label: '📄 Subir archivo' }
+                { id: 'manual', label: '📄 Upload file' }
               ].map(m => (
                 <button key={m.id} onClick={() => { setMode(m.id); setError('') }}
                   style={{
@@ -200,7 +200,7 @@ const blob = new Blob([bytes], {
                   }}
                 />
                 <p style={{ fontSize: '0.8rem', color: '#999', marginTop: '0.5rem', marginBottom: 0 }}>
-                  Pega el link de la carpeta del proyecto en SharePoint (RE-XXXX-...)
+                  Paste the link to the project folder in SharePoint (RE-XXXX-...)
                 </p>
               </div>
             ) : (
@@ -213,9 +213,9 @@ const blob = new Blob([bytes], {
                 <input type="file" accept=".docx" onChange={handleFileChange} style={{ display: 'none' }} />
                 <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>{file ? '✅' : '📄'}</div>
                 <div style={{ fontSize: '0.9rem', color: file ? '#16a34a' : '#666', fontWeight: file ? '600' : '400' }}>
-                  {file ? file.name : 'Click para seleccionar el archivo .docx'}
+                  {file ? file.name : 'Click to select the .docx file'}
                 </div>
-                {!file && <div style={{ fontSize: '0.8rem', color: '#999', marginTop: '0.25rem' }}>Solo archivos .docx</div>}
+                {!file && <div style={{ fontSize: '0.8rem', color: '#999', marginTop: '0.25rem' }}>Only .docx files</div>}
               </label>
             )}
 
@@ -233,7 +233,7 @@ const blob = new Blob([bytes], {
                 flex: 1, padding: '0.65rem', border: '1px solid #ddd', borderRadius: '4px',
                 cursor: 'pointer', fontSize: '0.9rem', backgroundColor: 'white', color: '#333'
               }}>
-                Cancelar
+                Cancel
               </button>
               <button
                 onClick={mode === 'sharepoint' ? processWithSharePoint : processManual}
@@ -243,7 +243,7 @@ const blob = new Blob([bytes], {
                   cursor: canProcess ? 'pointer' : 'not-allowed', fontSize: '0.9rem',
                   fontWeight: '600', backgroundColor: canProcess ? 'black' : '#ccc', color: 'white'
                 }}>
-                Procesar con Claude
+                Process with Claude
               </button>
             </div>
           </>
@@ -252,7 +252,7 @@ const blob = new Blob([bytes], {
         {step === 'processing' && (
           <div style={{ textAlign: 'center', padding: '2rem 0' }}>
             <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>⚙️</div>
-            <p style={{ color: '#333', fontWeight: '600', marginBottom: '0.5rem' }}>Procesando...</p>
+            <p style={{ color: '#333', fontWeight: '600', marginBottom: '0.5rem' }}>Processing...</p>
             <p style={{ color: '#666', fontSize: '0.9rem', margin: 0, lineHeight: '1.5' }}>{statusMsg}</p>
           </div>
         )}
@@ -261,7 +261,7 @@ const blob = new Blob([bytes], {
           <div style={{ textAlign: 'center', padding: '2rem 0' }}>
             <div style={{ fontSize: '2.5rem', marginBottom: '1rem' }}>🎉</div>
             <p style={{ color: '#16a34a', fontWeight: '600', marginBottom: '0.5rem' }}>{statusMsg}</p>
-            <p style={{ color: '#666', fontSize: '0.85rem', margin: 0 }}>Redirigiendo al artículo...</p>
+            <p style={{ color: '#666', fontSize: '0.85rem', margin: 0 }}>Redirecting to article...</p>
           </div>
         )}
 

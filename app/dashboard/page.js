@@ -56,10 +56,10 @@ export default function Dashboard() {
       <div style={{ padding: '2rem', maxWidth: '1200px', margin: '0 auto' }}>
         <div style={{ marginBottom: '1.5rem' }}>
           <h1 style={{ margin: 0, fontSize: '1.4rem', color: '#111', fontWeight: '700' }}>
-            Artículos de Research
+            Research Articles
           </h1>
           <p style={{ margin: '0.25rem 0 0', fontSize: '0.85rem', color: '#999' }}>
-            Gestiona y publica el contenido de MSCI Research
+            Manage and publish MSCI Research content
           </p>
         </div>
 
@@ -68,7 +68,7 @@ export default function Dashboard() {
             backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e5e5e5',
             padding: '3rem', textAlign: 'center'
           }}>
-            <p style={{ color: '#999', fontSize: '0.9rem', margin: 0 }}>Cargando artículos...</p>
+            <p style={{ color: '#999', fontSize: '0.9rem', margin: 0 }}>Loading articles...</p>
           </div>
         ) : (
           <ArticleTable

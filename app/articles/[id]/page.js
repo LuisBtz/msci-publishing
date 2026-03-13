@@ -152,7 +152,7 @@ export default function ArticlePage() {
 
   if (loading || loadingArticle) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif' }}>
-      <p style={{ color: '#999' }}>Cargando...</p>
+      <p style={{ color: '#999' }}>Loading...</p>
     </div>
   )
   if (error) return (
@@ -162,7 +162,7 @@ export default function ArticlePage() {
   )
 
   const TYPE_LABELS = { 'blog-post': 'Blog Post', 'paper': 'Paper', 'quick-take': 'Quick Take', 'podcast': 'Podcast' }
-  const STATUS_LABELS = { 'in-progress': 'En proceso', 'in-review': 'En revisión', 'approved': 'Aprobado', 'published': 'Publicado' }
+  const STATUS_LABELS = { 'in-progress': 'In Progress', 'in-review': 'In Review', 'approved': 'Approved', 'published': 'Published' }
   const STATUS_COLORS = { 'in-progress': '#a87a1a', 'in-review': '#1a6fa8', 'approved': '#1a8a4a', 'published': '#555' }
   const wordTags = article.tags?.all_tags || []
   const exhibitPaths = article.exhibit_paths || null
@@ -248,7 +248,7 @@ export default function ArticlePage() {
           {activeTab === 'overview' && (
             <div style={{ display: 'grid', gap: '1rem' }}>
 
-              <Section title="Título">
+              <Section title="Title">
                 <FieldRow value={article.headline} bold copied={copied['headline']} onCopy={() => copy('headline', article.headline)} />
               </Section>
 
@@ -256,13 +256,13 @@ export default function ArticlePage() {
                 <FieldRow value={article.slug} mono copied={copied['slug']} onCopy={() => copy('slug', article.slug)} />
               </Section>
 
-              <Section title="URL Final">
+              <Section title="Final URL">
                 <FieldRow value={article.final_url} mono copied={copied['url']} onCopy={() => copy('url', article.final_url)} />
               </Section>
 
               <Section title="Tags AEM">
                 <div style={{ marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.8rem', color: '#666' }}>{wordTags.length} tags del documento</span>
+                  <span style={{ fontSize: '0.8rem', color: '#666' }}>{wordTags.length} tags from document</span>
                   <CopyBtn label="Copy all" copied={copied['tags']} onCopy={() => copy('tags', wordTags.join(', '))} />
                 </div>
                 {wordTags.length > 0 ? (
@@ -281,18 +281,18 @@ export default function ArticlePage() {
                       ))}
                     </div>
                     <p style={{ fontSize: '0.75rem', color: '#999', margin: 0 }}>
-                      💡 Click en cada tag para copiarlo individualmente, o usa "Copy all".
+                      💡 Click each tag to copy it individually, or use "Copy all".
                     </p>
                   </>
                 ) : (
                   <p style={{ color: '#cc0000', fontSize: '0.85rem', margin: 0 }}>
-                    ⚠ No se encontraron tags. Elimina este artículo y procésalo de nuevo.
+                    ⚠ No tags found. Delete this article and process it again.
                   </p>
                 )}
               </Section>
 
               {article.read_time && (
-                <Section title="Read Time (minutos)">
+                <Section title="Read Time (minutes)">
                   <FieldRow value={String(article.read_time)} mono bold copied={copied['read_time']} onCopy={() => copy('read_time', String(article.read_time))} />
                 </Section>
               )}
@@ -304,7 +304,7 @@ export default function ArticlePage() {
                 </div>
               </Section>
 
-              <Section title="Autores">
+              <Section title="Authors">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   {article.authors?.map((a, i) => (
                     <div key={i} style={{ padding: '0.75rem', backgroundColor: '#fafafa', borderRadius: '6px', border: '1px solid #e5e5e5' }}>
@@ -328,20 +328,20 @@ export default function ArticlePage() {
               </Section>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <Section title="Estado">
+                <Section title="Status">
                   <select value={article.status}
                     onChange={async e => {
                       const { data } = await supabase.from('articles').update({ status: e.target.value }).eq('id', id).select().single()
                       if (data) setArticle(data)
                     }}
                     style={{ width: '100%', padding: '0.5rem 0.75rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.9rem', backgroundColor: 'white' }}>
-                    <option value="in-progress">En proceso</option>
-                    <option value="in-review">En revisión</option>
-                    <option value="approved">Aprobado</option>
-                    <option value="published">Publicado</option>
+                    <option value="in-progress">In Progress</option>
+                    <option value="in-review">In Review</option>
+                    <option value="approved">Approved</option>
+                    <option value="published">Published</option>
                   </select>
                 </Section>
-                <Section title="Fecha de Publicación">
+                <Section title="Publication Date">
                   <input type="date" defaultValue={article.publish_date || ''}
                     onChange={async e => {
                       await supabase.from('articles').update({ publish_date: e.target.value }).eq('id', id)
@@ -378,7 +378,7 @@ export default function ArticlePage() {
 
                 if (block.type === 'text') {
                   return (
-                    <Section key={blockIdx} title="Bloque de texto">
+                    <Section key={blockIdx} title={`Text Block ${blockIdx + 1}`}>
                       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem' }}>
                         <CopyBtn label="Copy HTML" copied={copied[`block_${blockIdx}`]}
                           onCopy={() => copy(`block_${blockIdx}`, block.html)} />
@@ -541,13 +541,13 @@ export default function ArticlePage() {
               )}
 
               {/* Related Content */}
-              <Section title={fetchingMeta ? 'Related Content — obteniendo meta descriptions...' : 'Related Content'}>
+              <Section title={fetchingMeta ? 'Related Content — fetching meta descriptions...' : 'Related Content'}>
                 {article.related_resources?.length > 0 ? (
                   <div style={{ display: 'grid', gap: '1rem' }}>
                     {article.related_resources.map((r, i) => (
                       <div key={i} style={{ padding: '1rem', backgroundColor: '#fafafa', borderRadius: '6px', border: '1px solid #e5e5e5' }}>
                         <div style={{ marginBottom: '0.75rem' }}>
-                          <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>Título</label>
+                          <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>Title</label>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <span style={{ flex: 1, fontSize: '0.9rem', color: '#111', fontWeight: '500' }}>{r.title}</span>
                             <CopyBtn copied={copied[`rt_${i}`]} onCopy={() => copy(`rt_${i}`, r.title)} />
@@ -563,7 +563,7 @@ export default function ArticlePage() {
                           </div>
                         </div>
                         <div style={{ marginBottom: '0.75rem' }}>
-                          <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>URL AEM</label>
+                          <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>AEM URL</label>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <code style={{ flex: 1, fontSize: '0.8rem', fontFamily: 'monospace', color: '#555', wordBreak: 'break-all' }}>{r.url}</code>
                             <CopyBtn copied={copied[`ru_${i}`]} onCopy={() => copy(`ru_${i}`, r.url)} />
@@ -580,7 +580,7 @@ export default function ArticlePage() {
                     ))}
                   </div>
                 ) : (
-                  <p style={{ color: '#999', fontSize: '0.9rem', margin: 0 }}>No hay related resources.</p>
+                  <p style={{ color: '#999', fontSize: '0.9rem', margin: 0 }}>No related resources.</p>
                 )}
               </Section>
 
@@ -590,8 +590,8 @@ export default function ArticlePage() {
                 padding: '0.75rem 1rem', backgroundColor: '#f9fafb', border: '1px solid #e5e5e5', borderRadius: '8px'
               }}>
                 <div>
-                  <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#111' }}>Assets de SharePoint</span>
-                  <span style={{ fontSize: '0.78rem', color: '#999', marginLeft: '0.5rem' }}>Los links expiran ~1 hora después de procesar</span>
+                  <span style={{ fontSize: '0.85rem', fontWeight: '600', color: '#111' }}>SharePoint Assets</span>
+                  <span style={{ fontSize: '0.78rem', color: '#999', marginLeft: '0.5rem' }}>Links expire ~1 hour after processing</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   {refreshError && <span style={{ fontSize: '0.78rem', color: '#cc0000' }}>{refreshError}</span>}
@@ -609,8 +609,8 @@ export default function ArticlePage() {
               <div style={{ marginTop: '0.5rem', borderTop: '1px solid #e5e5e5', paddingTop: '1.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
                   <div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: '600', color: '#111', marginBottom: '0.25rem' }}>Exportar y Publicar</div>
-                    <div style={{ fontSize: '0.75rem', color: '#999' }}>Genera un script listo para ejecutar en la consola de AEM</div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: '600', color: '#111', marginBottom: '0.25rem' }}>Export and Publish</div>
+                    <div style={{ fontSize: '0.75rem', color: '#999' }}>Generate a script ready to run in the AEM console</div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                     <button onClick={() => {
@@ -630,16 +630,16 @@ export default function ArticlePage() {
                 {showPublishScript && publishScript && (
                   <div style={{ marginTop: '1rem', padding: '1rem', backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                      <p style={{ fontSize: '0.85rem', fontWeight: '600', color: '#0c4a6e', margin: 0 }}>🚀 Script listo para AEM</p>
+                      <p style={{ fontSize: '0.85rem', fontWeight: '600', color: '#0c4a6e', margin: 0 }}>🚀 Script ready for AEM</p>
                       <CopyBtn label="Copy script" copied={copied['script']} onCopy={() => copy('script', publishScript)} />
                     </div>
                     <p style={{ fontSize: '0.8rem', color: '#075985', margin: '0 0 0.75rem', lineHeight: '1.6' }}>
-                      1. Abre AEM:{' '}
+                      1. Open AEM:{' '}
                       <a href="https://author-p125318-e1369672.adobeaemcloud.com" target="_blank" rel="noreferrer" style={{ color: '#1a6fa8' }}>
                         author-p125318-e1369672.adobeaemcloud.com
                       </a><br />
-                      2. Abre DevTools (F12) → Console<br />
-                      3. Pega el script y presiona Enter — si ves <strong>Status: 201</strong> ✅ fue creado
+                      2. Open DevTools (F12) → Console<br />
+                      3. Paste the script and press Enter — if you see <strong>Status: 201</strong> ✅ it was created
                     </p>
                     <code style={{
                       display: 'block', backgroundColor: '#e0f2fe', padding: '0.75rem', borderRadius: '4px',

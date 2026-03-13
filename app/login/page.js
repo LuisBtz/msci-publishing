@@ -24,8 +24,7 @@ const handleLogin = async (e) => {
   })
 
   if (error) {
-    setError('Email o contraseña incorrectos')
-    setLoading(false)
+      setError('Invalid email or password')
     return
   }
 
@@ -70,13 +69,13 @@ const handleLogin = async (e) => {
                 width: '100%', padding: '0.65rem 0.75rem', border: '1px solid #ddd',
                 borderRadius: '4px', fontSize: '0.95rem', boxSizing: 'border-box'
               }}
-              placeholder="tu@email.com"
+              placeholder="your@email.com"
             />
           </div>
 
           <div style={{ marginBottom: '1.5rem' }}>
             <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '600', marginBottom: '0.4rem', color: '#333' }}>
-              Contraseña
+              Password
             </label>
             <input
               type="password"
@@ -110,7 +109,7 @@ const handleLogin = async (e) => {
               fontWeight: '600', cursor: loading ? 'not-allowed' : 'pointer'
             }}
           >
-            {loading ? 'Entrando...' : 'Entrar'}
+            {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
       </div>

@@ -157,7 +157,7 @@ export default function TabPreview({ article }) {
                   <ExhibitAsset exhibit={exhibit} onExpired={() => {}} />
                 ) : (
                   <div style={{ backgroundColor: '#f5f5f5', borderRadius: '4px', padding: '2rem', textAlign: 'center', color: '#999', fontSize: '0.85rem' }}>
-                    📊 Exhibit — imagen no disponible
+                    📊 Exhibit — image not available
                   </div>
                 )}
                 {block.caption && (
