@@ -20,11 +20,9 @@ function resolveExhibit(block, exhibitPaths) {
   if (!exhibitPaths) return null
   const idx = block.sharepoint_index ?? block.exhibit_index
   if (idx == null) return null
-
   const { statics = [], interactives = [], summary = [] } = exhibitPaths
   const summaryItem = summary[idx]
   if (!summaryItem) return null
-
   if (summaryItem.type === 'static') {
     const s = statics[idx]
     return s ? { ...s, exhibit_type: 'static' } : null
@@ -45,7 +43,6 @@ export default function ArticlePage() {
   const [loadingArticle, setLoadingArticle] = useState(true)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState('overview')
-  const [fetchingMeta, setFetchingMeta] = useState(false)
   const [publishScript, setPublishScript] = useState('')
   const [showPublishScript, setShowPublishScript] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -53,55 +50,76 @@ export default function ArticlePage() {
   const [exhibitOverrides, setExhibitOverrides] = useState({})
   const { copied, copy } = useCopy()
 
-  useEffect(() => { if (user && id) fetchArticle() }, [user, id])
+  const getDisplayUrl = (url) => {
+    if (!url) return ''
+    if (url.startsWith('/content/ipc/us/en/indexes')) {
+      return `https://www.msci.com${url.replace('/content/ipc/us/en', '/indexes')}`
+    }
+    if (url.startsWith('/content/msci/us/en')) {
+      return `https://www.msci.com${url.replace('/content/msci/us/en', '')}`
+    }
+    if (url.startsWith('/')) {
+      return `https://www.msci.com${url}`
+    }
+    return url
+  }
+
+  const fetchMissingMetas = async (articleData, indices) => {
+    const resources = articleData.related_resources || []
+    const updates = await Promise.all(
+      indices.map(async (i) => {
+        const r = resources[i]
+        const url = getDisplayUrl(r.original_url || r.url)
+        if (!url) return null
+        try {
+          const res = await fetch('/api/fetch-meta', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ urls: [url] })
+          })
+          const { results } = await res.json()
+          const meta = results?.[0]
+          if (!meta) return null
+          return {
+            index: i,
+            meta_description: meta.metaDescription || '',
+            title: r.title?.trim() ? r.title : (meta.title || r.title)
+          }
+        } catch {
+          return null
+        }
+      })
+    )
+
+    const updated = resources.map((r, i) => {
+      const update = updates.find(u => u?.index === i)
+      if (!update) return r
+      return {
+        ...r,
+        meta_description: update.meta_description || r.meta_description,
+        title: update.title || r.title
+      }
+    })
+
+    await supabase.from('articles').update({ related_resources: updated }).eq('id', id)
+    setArticle(prev => ({ ...prev, related_resources: updated }))
+  }
 
   const fetchArticle = async () => {
     const { data, error } = await supabase.from('articles').select('*').eq('id', id).single()
     if (error) setError('Artículo no encontrado')
     else {
       setArticle(data)
-      // Do not auto-fetch meta descriptions to keep initial processing lightweight.
-    // Users can fetch meta on demand via the Related Content section.
+      const missing = (data.related_resources || [])
+        .map((r, i) => ({ r, i }))
+        .filter(({ r }) => !r.meta_description || r.meta_description.trim() === '')
+      if (missing.length > 0) {
+        fetchMissingMetas(data, missing.map(({ i }) => i))
+      }
     }
     setLoadingArticle(false)
   }
 
-  const [metaLoading, setMetaLoading] = useState({})
-
-  const fetchMetaForResource = async (index) => {
-    const resource = article.related_resources?.[index]
-    if (!resource) return
-
-    const url = getDisplayUrl(resource.original_url || resource.url)
-    if (!url) return
-
-    setMetaLoading(prev => ({ ...prev, [index]: true }))
-    try {
-      const res = await fetch('/api/fetch-meta', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls: [url] })
-      })
-      const { results } = await res.json()
-      const meta = results?.[0]
-      if (meta) {
-        const updated = (article.related_resources || []).map((r, i) => {
-          if (i !== index) return r
-          return {
-            ...r,
-            meta_description: r.meta_description && r.meta_description.trim().length > 0
-              ? r.meta_description
-              : (meta.metaDescription || ''),
-            title: r.title && r.title.trim().length > 0 ? r.title : (meta.title || '')
-          }
-        })
-        await supabase.from('articles').update({ related_resources: updated }).eq('id', id)
-        setArticle(prev => ({ ...prev, related_resources: updated }))
-      }
-    } catch (e) {
-      console.error('Error fetching meta:', e)
-    }
-    setMetaLoading(prev => ({ ...prev, [index]: false }))
-  }
+  useEffect(() => { if (user && id) fetchArticle() }, [user, id])
 
   const refreshAssets = async () => {
     setRefreshing(true)
@@ -144,7 +162,6 @@ export default function ArticlePage() {
       return ''
     }).join('\n')
 
-    // Build exhibits asset list
     const exhibitAssets = []
     if (exhibitPaths) {
       const { statics = [], interactives = [] } = exhibitPaths
@@ -157,7 +174,6 @@ export default function ArticlePage() {
       })
     }
 
-    // Build banners asset list — only .webp files
     const bannerAssets = []
     if (article.banner_paths) {
       Object.values(article.banner_paths).forEach(b => {
@@ -192,7 +208,6 @@ export default function ArticlePage() {
   const h = { 'Content-Type': 'application/json', 'CSRF-Token': token };
   const base = '/api/assets/test-fragments/blog-posts';
 
-  // Helper: upload a file from URL to AEM path
   async function uploadAsset(url, destPath) {
     try {
       const blob = await fetch(url).then(r => r.blob());
@@ -204,29 +219,23 @@ export default function ArticlePage() {
     } catch(e) { return e.message; }
   }
 
-  // Helper: create folder
   async function createFolder(path, title) {
     const r = await fetch(path, { method: 'POST', headers: h, body: JSON.stringify({ class: 'assetFolder', properties: { title } }) });
     return r.status;
   }
 
-  // 1. Create article folder
   let s = await createFolder(\`\${base}/${slug}\`, \`${title}\`);
   console.log('1. Article folder:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
 
-  // 2. Create exhibits subfolder
   s = await createFolder(\`\${base}/${slug}/exhibits\`, 'Exhibits');
   console.log('2. Exhibits folder:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
 
-  // 3. Create banners subfolder
   s = await createFolder(\`\${base}/${slug}/banners\`, 'Banners');
   console.log('3. Banners folder:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
 
-  // 4. Create Content Fragment
   s = await fetch(\`\${base}/${slug}/${slug}\`, { method: 'POST', headers: h, body: \`${cfJson}\` }).then(r=>r.status);
   console.log('4. Content Fragment:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
 
-  // 5. Upload exhibits
   const exhibits = JSON.parse(\`${exhibitsJson}\`);
   console.log(\`5. Uploading \${exhibits.length} exhibit(s)...\`);
   for (const a of exhibits) {
@@ -234,7 +243,6 @@ export default function ArticlePage() {
     console.log(\`   \${a.filename}:\`, s, s===201?'✅':s===409?'⚠ Exists':'❌');
   }
 
-  // 6. Upload banners
   const banners = JSON.parse(\`${bannersJson}\`);
   console.log(\`6. Uploading \${banners.length} banner(s)...\`);
   for (const a of banners) {
@@ -265,50 +273,22 @@ export default function ArticlePage() {
   const STATUS_LABELS = { 'in-progress': 'In Progress', 'in-review': 'In Review', 'approved': 'Approved', 'published': 'Published' }
   const STATUS_COLORS = { 'in-progress': '#a87a1a', 'in-review': '#1a6fa8', 'approved': '#1a8a4a', 'published': '#555' }
   const wordTags = article.tags?.all_tags || []
+
   const getAemPath = (url) => {
     if (!url) return url
-    // Already an AEM path
     if (url.startsWith('/content/')) return url
-
     try {
       const parsed = new URL(url, 'https://www.msci.com')
       const hostname = parsed.hostname.toLowerCase()
       const pathname = parsed.pathname
-
-      // External URLs remain absolute
       if (!hostname.endsWith('msci.com')) return url
       if (hostname === 'support.msci.com') return url
-
-      // /indexes/index/[NUMERIC_ID] stays absolute
       if (pathname.startsWith('/indexes/index/')) return url
-
-      // /indexes/... → /content/ipc/us/en/indexes/...
       if (pathname.startsWith('/indexes/')) return `/content/ipc/us/en${pathname}`
-
-      // Default → /content/msci/us/en/...
       return `/content/msci/us/en${pathname}`
     } catch {
       return url
     }
-  }
-
-  const getDisplayUrl = (url) => {
-    if (!url) return ''
-
-    // If already an AEM path, reconstruct msci.com link
-    if (url.startsWith('/content/ipc/us/en/indexes')) {
-      return `https://www.msci.com${url.replace('/content/ipc/us/en', '/indexes')}`
-    }
-    if (url.startsWith('/content/msci/us/en')) {
-      return `https://www.msci.com${url.replace('/content/msci/us/en', '')}`
-    }
-
-    // If it's a relative path, assume msci.com base
-    if (url.startsWith('/')) {
-      return `https://www.msci.com${url}`
-    }
-
-    return url
   }
 
   const exhibitPaths = article.exhibit_paths || null
@@ -551,7 +531,6 @@ export default function ArticlePage() {
                   return (
                     <Section key={blockIdx} title="Exhibit">
 
-                      {/* Título H3 */}
                       <div style={{ marginBottom: '0.75rem' }}>
                         <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>
                           Título (H3)
@@ -563,12 +542,10 @@ export default function ArticlePage() {
                         </div>
                       </div>
 
-                      {/* Imagen */}
                       <div style={{ marginBottom: '0.75rem' }}>
                         <ExhibitAsset exhibit={exhibit} onExpired={refreshAssets} />
                       </div>
 
-                      {/* Archivos + dropdown */}
                       <div style={{ backgroundColor: '#f5f5f5', borderRadius: '6px', padding: '1rem', marginBottom: '0.75rem', border: '1px solid #e5e5e5' }}>
                         {exhibit ? (
                           <div>
@@ -628,7 +605,6 @@ export default function ArticlePage() {
                           </p>
                         )}
 
-                        {/* Dropdown override */}
                         {exhibitOptions.length > 0 && (
                           <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #e0e0e0' }}>
                             <label style={{ fontSize: '0.72rem', color: '#999', display: 'block', marginBottom: '0.35rem', fontWeight: '600', textTransform: 'uppercase' }}>
@@ -646,7 +622,6 @@ export default function ArticlePage() {
                         )}
                       </div>
 
-                      {/* Caption */}
                       {block.caption && (
                         <div>
                           <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>Caption</label>
@@ -687,20 +662,20 @@ export default function ArticlePage() {
               )}
 
               {/* Related Content */}
-                    <Section title={fetchingMeta ? 'Related Content — fetching meta descriptions...' : 'Related Content'}>
-                    {article.related_warning && (
-                        <div style={{
-                        marginBottom: '1rem', padding: '0.6rem 0.75rem',
-                        backgroundColor: '#fffbeb', border: '1px solid #fcd34d',
-                        borderRadius: '6px', fontSize: '0.8rem', color: '#92400e', fontWeight: '500'
-                        }}>
-                        ⚠ {article.related_warning}
-                        </div>
-                    )}
-                    {article.related_resources?.length > 0 ? (
-                        <div style={{ display: 'grid', gap: '1rem' }}>
-                        {article.related_resources.map((r, i) => (
-                        <div key={i} style={{ padding: '1rem', backgroundColor: '#fafafa', borderRadius: '6px', border: '1px solid #e5e5e5' }}>
+              <Section title="Related Content">
+                {article.related_warning && (
+                  <div style={{
+                    marginBottom: '1rem', padding: '0.6rem 0.75rem',
+                    backgroundColor: '#fffbeb', border: '1px solid #fcd34d',
+                    borderRadius: '6px', fontSize: '0.8rem', color: '#92400e', fontWeight: '500'
+                  }}>
+                    ⚠ {article.related_warning}
+                  </div>
+                )}
+                {article.related_resources?.length > 0 ? (
+                  <div style={{ display: 'grid', gap: '1rem' }}>
+                    {article.related_resources.map((r, i) => (
+                      <div key={i} style={{ padding: '1rem', backgroundColor: '#fafafa', borderRadius: '6px', border: '1px solid #e5e5e5' }}>
                         <div style={{ marginBottom: '0.75rem' }}>
                           <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>Title</label>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -712,21 +687,8 @@ export default function ArticlePage() {
                           <label style={{ fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', color: '#999', display: 'block', marginBottom: '0.25rem' }}>Meta Description</label>
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
                             <span style={{ flex: 1, fontSize: '0.85rem', color: r.meta_description ? '#555' : '#cc0000', lineHeight: '1.5', fontStyle: r.meta_description ? 'normal' : 'italic' }}>
-                              {r.meta_description || '⚠ No meta description available yet.'}
+                              {r.meta_description || '⚠ No meta description available.'}
                             </span>
-                            {!r.meta_description && (
-                              <button
-                                onClick={() => fetchMetaForResource(i)}
-                                disabled={metaLoading[i]}
-                                style={{
-                                  padding: '0.3rem 0.6rem', borderRadius: '4px', border: '1px solid #ddd',
-                                  backgroundColor: metaLoading[i] ? '#f0f0f0' : 'white', cursor: metaLoading[i] ? 'not-allowed' : 'pointer',
-                                  fontSize: '0.75rem', fontWeight: '600', color: '#111'
-                                }}
-                              >
-                                {metaLoading[i] ? 'Fetching…' : 'Fetch meta'}
-                              </button>
-                            )}
                             {r.meta_description && <CopyBtn copied={copied[`rm_${i}`]} onCopy={() => copy(`rm_${i}`, r.meta_description)} />}
                           </div>
                         </div>
