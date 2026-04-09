@@ -9,10 +9,11 @@ const supabase = createClient(
 );
 
 export async function generateMetadata({ params }) {
+  const { id } = await params
   const { data } = await supabase
     .from("articles")
     .select("headline, meta_description")
-    .eq("id", params.id)
+    .eq("id", id)
     .single();
 
   if (!data) return { title: "Preview" };
@@ -26,10 +27,11 @@ export async function generateMetadata({ params }) {
 }
 
 export default async function PreviewPage({ params }) {
+  const { id } = await params
   const { data: article, error } = await supabase
     .from("articles")
     .select("*")
-    .eq("id", params.id)
+    .eq("id", id)
     .single();
 
   if (error || !article) notFound();
