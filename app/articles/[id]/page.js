@@ -198,11 +198,13 @@ export default function ArticlePage() {
   const [error, setError] = useState('')
   const [publishScript, setPublishScript] = useState('')
   const [showPublishScript, setShowPublishScript] = useState(false)
+  const [scriptLabel, setScriptLabel] = useState('AEM Publish Script')
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState('')
   const [exhibitOverrides, setExhibitOverrides] = useState({})
   const [previewCopied, setPreviewCopied] = useState(false)
   const { copied, copy, copyRich } = useCopy()
+  const [activeTab, setActiveTab] = useState('metadata')
 
   const previewUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/preview/${id}`
@@ -295,22 +297,8 @@ export default function ArticlePage() {
     setRefreshing(false)
   }
 
-  const publishToAEM = () => {
+  const publishAssetsToDAM = () => {
     const exhibitPaths = article.exhibit_paths || null
-    const bodyHtml = (article.body_blocks || []).map(block => {
-      if (block.type === 'text') return block.html || ''
-      if (block.type === 'exhibit') {
-        const resolvedIdx = block.sharepoint_index ?? block.exhibit_index
-        const exhibit = resolveExhibit({ ...block, sharepoint_index: resolvedIdx }, exhibitPaths)
-        const filename = exhibit?.exhibit_type === 'static' ? exhibit?.desktop?.filename : exhibit?.json?.filename
-        return [
-          block.title ? `<h3>${block.title}</h3>` : '',
-          `<!-- EXHIBIT: ${filename || 'unknown'} -->`,
-          block.caption ? `<p class="caption">${block.caption}</p>` : ''
-        ].filter(Boolean).join('')
-      }
-      return ''
-    }).join('\n')
 
     const exhibitAssets = []
     if (exhibitPaths) {
@@ -331,71 +319,378 @@ export default function ArticlePage() {
       })
     }
 
-    const cfPayload = {
-      properties: {
-        'cq:model': '/conf/global/settings/dam/cfm/models/blog-post-test',
-        title: article.headline,
-        elements: {
-          headline: { value: article.headline || '' },
-          slug: { value: article.slug || '' },
-          publishDate: { value: article.publish_date || '' },
-          body: { value: bodyHtml, ':type': 'text/html' }
-        }
-      }
-    }
-
     const esc = s => s.replace(/\\/g, '\\\\').replace(/`/g, '\\`')
     const exhibitsJson = esc(JSON.stringify(exhibitAssets))
     const bannersJson = esc(JSON.stringify(bannerAssets))
-    const cfJson = esc(JSON.stringify(cfPayload))
     const slug = article.slug
     const title = article.headline
 
     const script = `
 (async () => {
   const token = (await fetch('/libs/granite/csrf/token.json').then(r=>r.json())).token;
-  const h = { 'Content-Type': 'application/json', 'CSRF-Token': token };
-  const base = '/api/assets/test-fragments/blog-posts';
-  async function uploadAsset(url, destPath) {
-    try {
-      const blob = await fetch(url).then(r => r.blob());
-      const fd = new FormData();
-      fd.append('file', blob, destPath.split('/').pop());
-      fd.append('fileName', destPath.split('/').pop());
-      const r = await fetch(destPath, { method: 'POST', headers: { 'CSRF-Token': token }, body: fd });
-      return r.status;
-    } catch(e) { return e.message; }
-  }
+  const apiBase  = '/api/assets/web/msci-com/research-and-insights/blog-post';
+  const damBase  = '/content/dam/web/msci-com/research-and-insights/blog-post';
+  const mimeMap  = { webp:'image/webp', jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', svg:'image/svg+xml', json:'application/json' };
+
+  // Create folder via Assets API (unchanged — works fine)
   async function createFolder(path, title) {
-    const r = await fetch(path, { method: 'POST', headers: h, body: JSON.stringify({ class: 'assetFolder', properties: { title } }) });
+    const r = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'CSRF-Token': token },
+      body: JSON.stringify({ class: 'assetFolder', properties: { title } })
+    });
     return r.status;
   }
-  let s = await createFolder(\`\${base}/${slug}\`, \`${title}\`);
-  console.log('1. Article folder:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
-  s = await createFolder(\`\${base}/${slug}/exhibits\`, 'Exhibits');
-  console.log('2. Exhibits folder:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
-  s = await createFolder(\`\${base}/${slug}/banners\`, 'Banners');
-  console.log('3. Banners folder:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
-  s = await fetch(\`\${base}/${slug}/${slug}\`, { method: 'POST', headers: h, body: \`${cfJson}\` }).then(r=>r.status);
-  console.log('4. Content Fragment:', s, s===201?'✅ Created':s===409?'⚠ Exists':'❌');
+
+  // Direct Binary Upload — required by AEM Cloud Service to trigger full asset processing
+  async function uploadAsset(sourceUrl, damFolderPath, filename) {
+    try {
+      // 1. Fetch source binary
+      const srcRes = await fetch(sourceUrl);
+      if (!srcRes.ok) return { ok: false, detail: 'source fetch failed: HTTP ' + srcRes.status };
+      const buffer = await srcRes.arrayBuffer();
+      if (!buffer.byteLength) return { ok: false, detail: 'empty response from source URL' };
+      const ext = filename.split('.').pop().toLowerCase();
+      const mime = mimeMap[ext] || 'application/octet-stream';
+
+      // 2. Initiate upload — AEM returns a pre-signed blob storage URI
+      const initRes = await fetch(damFolderPath + '.initiateUpload.json', {
+        method: 'POST',
+        headers: { 'CSRF-Token': token, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ fileName: filename, fileSize: String(buffer.byteLength) }).toString()
+      });
+      if (!initRes.ok) {
+        const txt = await initRes.text();
+        return { ok: false, detail: 'initiate failed HTTP ' + initRes.status + ': ' + txt.slice(0, 200) };
+      }
+      const initData = await initRes.json();
+      const fileInfo = initData.files?.[0];
+      if (!fileInfo?.uploadURIs?.length) return { ok: false, detail: 'no uploadURIs in initiate response: ' + JSON.stringify(initData).slice(0, 200) };
+
+      // 3. PUT binary directly to blob storage (Azure/S3 — no AEM auth needed)
+      const putRes = await fetch(fileInfo.uploadURIs[0], {
+        method: 'PUT',
+        headers: { 'Content-Type': mime },
+        body: buffer
+      });
+      if (!putRes.ok) return { ok: false, detail: 'blob PUT failed: HTTP ' + putRes.status };
+
+      // 4. Complete upload — triggers AEM asset processing pipeline (thumbnails, renditions, metadata)
+      const completeRes = await fetch(initData.completeURI, {
+        method: 'POST',
+        headers: { 'CSRF-Token': token, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ fileName: filename, fileSize: String(buffer.byteLength), mimeType: mime, uploadToken: fileInfo.uploadToken, replace: 'true' }).toString()
+      });
+      return { ok: completeRes.ok, status: completeRes.status, size: buffer.byteLength, mime };
+    } catch(e) { return { ok: false, detail: e.message }; }
+  }
+
+  function logResult(filename, res) {
+    if (res.ok) console.log(\`   ✅ \${filename} (\${Math.round(res.size/1024)}KB, \${res.mime})\`);
+    else console.log(\`   ❌ \${filename} — \${res.detail || 'HTTP ' + res.status}\`);
+  }
+
+  let s;
+  s = await createFolder(\`\${apiBase}/${slug}\`, \`${title}\`);
+  console.log('1. Article folder:', s===201?'✅ Created':s===409?'⚠ Exists':'❌ '+s);
+  s = await createFolder(\`\${apiBase}/${slug}/exhibits\`, 'Exhibits');
+  console.log('2. Exhibits folder:', s===201?'✅ Created':s===409?'⚠ Exists':'❌ '+s);
+  s = await createFolder(\`\${apiBase}/${slug}/banners\`, 'Banners');
+  console.log('3. Banners folder:', s===201?'✅ Created':s===409?'⚠ Exists':'❌ '+s);
+
   const exhibits = JSON.parse(\`${exhibitsJson}\`);
-  console.log(\`5. Uploading \${exhibits.length} exhibit(s)...\`);
+  console.log(\`4. Uploading \${exhibits.length} exhibit(s)...\`);
   for (const a of exhibits) {
-    s = await uploadAsset(a.url, \`\${base}/${slug}/exhibits/\${a.filename}\`);
-    console.log(\`   \${a.filename}:\`, s, s===201?'✅':s===409?'⚠ Exists':'❌');
+    logResult(a.filename, await uploadAsset(a.url, \`\${damBase}/${slug}/exhibits\`, a.filename));
   }
+
   const banners = JSON.parse(\`${bannersJson}\`);
-  console.log(\`6. Uploading \${banners.length} banner(s)...\`);
+  console.log(\`5. Uploading \${banners.length} banner(s)...\`);
   for (const a of banners) {
-    s = await uploadAsset(a.url, \`\${base}/${slug}/banners/\${a.filename}\`);
-    console.log(\`   \${a.filename}:\`, s, s===201?'✅':s===409?'⚠ Exists':'❌');
+    logResult(a.filename, await uploadAsset(a.url, \`\${damBase}/${slug}/banners\`, a.filename));
   }
-  console.log('\\n✅ Done! View at: /ui#/aem/assets.html/content/dam/test-fragments/blog-posts/${slug}');
+
+  console.log('\\n✅ Done! View at: /ui#/aem/assets.html/content/dam/web/msci-com/research-and-insights/blog-post/${slug}');
 })();
 `.trim()
 
     setPublishScript(script)
     setShowPublishScript(true)
+    setScriptLabel('Publish Assets to AEM DAM')
+  }
+
+  const createAEMPage = () => {
+    const slug = article.slug || ''
+    const esc = s => (s || '').replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$')
+    const title = esc(article.headline || '')
+    const metaDesc = esc(article.meta_description || '')
+    const readTime = article.read_time ? parseInt(article.read_time, 10) : ''
+    const publishDate = article.publish_date || ''
+    const parentPath = '/content/msci/us/en/research-and-insights/blog-post'
+    const damBase = '/content/dam/web/msci-com/research-and-insights/blog-post'
+    const authors = article.authors || []
+    const toAuthorSlug = name => (name || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    const contributorBase = '/content/dam/web/msci-com/research-and-insights/contributor'
+    const authorsJson = esc(JSON.stringify(authors.map(a => {
+      if (a.content_fragment_path) return a.content_fragment_path
+      const slug = toAuthorSlug(a.name)
+      return slug ? `${contributorBase}/${slug}/${slug}` : null
+    }).filter(Boolean)))
+    const tags = article.tags?.all_tags || []
+    const tagsJson = esc(JSON.stringify(tags))
+    const allBanners = Object.values(article.banner_paths || {})
+    const banner1x1 = allBanners.find(b => b?.filename?.includes('1x1'))
+    const thumbnailDamPath = banner1x1?.filename ? `${damBase}/${slug}/banners/${banner1x1.filename}` : ''
+
+    const script = `
+(async () => {
+  const token = (await fetch('/libs/granite/csrf/token.json').then(r=>r.json())).token;
+  const templatePath = '/conf/webmasters-aem/settings/wcm/templates/research-page2';
+  const parentPath = '${parentPath}';
+  const pagePath = parentPath + '/${slug}';
+  const jcrContent = pagePath + '/jcr:content';
+  const siblingBase = '/content/msci/us/en/research-and-insights/blog-post';
+  let r;
+
+  async function post(path, params) {
+    return fetch(path, { method: 'POST', headers: { 'CSRF-Token': token, 'Content-Type': 'application/x-www-form-urlencoded' }, body: params.toString() });
+  }
+  const ok = r => r.status === 200 || r.status === 201;
+
+  // ── Discovery: one sibling fetch used by steps 4, 5 and 6 ──
+  let siblingProps = null;    // flat jcr:content properties of a reference sibling
+  let siblingAuthors = null;  // authors.2.json of that sibling
+  try {
+    const list = await fetch(siblingBase + '.1.json', { headers: { 'CSRF-Token': token } }).then(r => r.json());
+    for (const key of Object.keys(list).filter(k => !k.startsWith('jcr:') && !k.startsWith(':')).slice(0, 20)) {
+      try {
+        const props = await fetch(siblingBase + '/' + key + '/jcr:content.2.json', { headers: { 'CSRF-Token': token } }).then(r => r.json());
+        const authRes = await fetch(siblingBase + '/' + key + '/jcr:content/authors.2.json', { headers: { 'CSRF-Token': token } });
+        if (authRes.ok) { siblingAuthors = await authRes.json(); siblingProps = props; break; }
+      } catch(e) { /* try next */ }
+    }
+  } catch(e) { /* no siblings */ }
+
+  // ── Step 1: Create page ──
+  console.log('1️⃣ Creating page "${slug}"...');
+  const s = (await fetch('/bin/wcmcommand', { method: 'POST', headers: { 'CSRF-Token': token, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ cmd: 'createPage', parentPath, title: \`${title}\`, label: '${slug}', template: templatePath }).toString() })).status;
+  if (s === 200 || s === 201) { console.log('   ✅ Created'); }
+  else if (s === 500) { console.log('   ⚠️ Already exists — updating properties'); }
+  else { console.error('   ❌ Failed: HTTP', s); return; }
+
+  // ── Step 2: Description ──
+  console.log('2️⃣ Setting description...');
+  try {
+    r = await post(jcrContent, new URLSearchParams({ 'jcr:description': \`${metaDesc}\` }));
+    console.log('   Description:', ok(r) ? '✅' : '❌ ' + r.status);
+  } catch(e) { console.error('   ❌', e.message); }
+
+  // ── Step 3: Display Date ──
+  console.log('3️⃣ Setting display date...');
+  try {
+    const pubDate = '${publishDate}';
+    if (!pubDate) { console.log('   ⚠️ No publication date — skipping'); } else {
+      const p = new URLSearchParams({ displayDate: pubDate + 'T00:00:00.000Z', 'displayDate@TypeHint': 'Date' });
+      r = await post(jcrContent, p);
+      console.log('   Display date:', ok(r) ? '✅ ' + pubDate : '❌ ' + r.status);
+    }
+  } catch(e) { console.error('   ❌', e.message); }
+
+  // ── Step 4: Read/Listen/Watch Time ──
+  console.log('4️⃣ Setting read time...');
+  try {
+    const rt = ${readTime || 0};
+    if (!rt) { console.log('   ⚠️ No read time — skipping'); } else {
+      const rtCandidates = ['time', 'readListenWatchTime', 'readTime', 'rlwTime'];
+      const rtProp = (siblingProps && rtCandidates.find(c => c in siblingProps && Number(siblingProps[c]) > 0)) || 'time';
+      r = await post(jcrContent, new URLSearchParams({ [rtProp]: String(rt), [rtProp + '@TypeHint']: 'Long' }));
+      console.log('   Read time:', ok(r) ? '✅ ' + rt + ' min' : '❌ ' + r.status);
+    }
+  } catch(e) { console.error('   ❌', e.message); }
+
+  // ── Step 5: Authors ──
+  console.log('5️⃣ Setting authors...');
+  try {
+    const authorPaths = JSON.parse(\`${authorsJson}\`);
+    if (!authorPaths.length) { console.log('   ⚠️ No authors — skipping'); } else {
+      // Discover author property name from sibling, fallback to probe
+      let authorProp = null;
+      if (siblingAuthors) {
+        const items = Object.keys(siblingAuthors).filter(k => k.startsWith('item'));
+        if (items.length) {
+          const props = Object.keys(siblingAuthors[items[0]]).filter(k => !k.startsWith('jcr:') && !k.startsWith('sling:') && !k.startsWith(':'));
+          if (props.length) authorProp = props[0];
+        }
+      }
+      if (!authorProp) {
+        const probePath = jcrContent + '/authors/__probe__';
+        for (const c of ['profilePath', 'fragmentPath', 'contentFragment', 'fileReference', 'author']) {
+          await fetch(probePath, { method: 'POST', headers: { 'CSRF-Token': token, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ 'jcr:primaryType': 'nt:unstructured', [c]: '/probe' }).toString() });
+          const probe = await fetch(probePath + '.json', { headers: { 'CSRF-Token': token } }).then(r => r.json()).catch(() => ({}));
+          if (probe[c] === '/probe') { authorProp = c; break; }
+        }
+        await fetch(probePath, { method: 'POST', headers: { 'CSRF-Token': token, 'Content-Type': 'application/x-www-form-urlencoded' }, body: ':operation=delete' });
+        if (!authorProp) { authorProp = 'profilePath'; }
+      }
+
+      await fetch(jcrContent + '/authors', { method: 'POST', headers: { 'CSRF-Token': token, 'Content-Type': 'application/x-www-form-urlencoded' }, body: ':operation=delete' });
+      for (let i = 0; i < authorPaths.length; i++) {
+        r = await fetch(jcrContent + '/authors/item' + i, { method: 'POST', headers: { 'CSRF-Token': token, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ 'jcr:primaryType': 'nt:unstructured', [authorProp]: authorPaths[i] }).toString() });
+        console.log('   Author ' + (i + 1) + ':', ok(r) ? '✅' : '❌ ' + r.status, authorPaths[i].split('/').pop());
+      }
+    }
+  } catch(e) { console.error('   ❌', e.message); }
+
+  // ── Step 6: Thumbnail ──
+  console.log('6️⃣ Setting thumbnail...');
+  try {
+    const thumbPath = '${thumbnailDamPath}';
+    if (!thumbPath) { console.log('   ⚠️ No 1x1 banner — skipping'); } else {
+      // Set the two standard image nodes
+      r = await post(jcrContent + '/cq:featuredimage', new URLSearchParams({ fileReference: thumbPath }));
+      console.log('   cq:featuredimage:', ok(r) ? '✅' : '❌ ' + r.status);
+      r = await post(jcrContent + '/image', new URLSearchParams({ fileReference: thumbPath }));
+      console.log('   image:', ok(r) ? '✅' : '❌ ' + r.status);
+
+      // Set any extra image node found in siblings (e.g. cq:featuredImage with capital I)
+      if (siblingProps) {
+        const extraNodes = Object.entries(siblingProps).filter(([k, v]) =>
+          typeof v === 'object' && v !== null && typeof v.fileReference === 'string' &&
+          v.fileReference.includes('/content/dam/') && k !== 'image' && k.toLowerCase() !== 'cq:featuredimage'
+        );
+        for (const [nodeName] of extraNodes) {
+          r = await post(jcrContent + '/' + nodeName, new URLSearchParams({ fileReference: thumbPath }));
+          console.log('   ' + nodeName + ':', ok(r) ? '✅' : '❌ ' + r.status);
+        }
+      }
+    }
+  } catch(e) { console.error('   ❌', e.message); }
+
+  // ── Step 7: Tags (direct mapping, preserve existing) ──
+  console.log('7️⃣ Setting tags...');
+  try {
+    // Category → AEM namespace mapping
+    const catToNs = {
+      'asset class': 'asset-class',
+      'research format': 'research-format',
+      'format': 'research-format',
+      'line of business': 'line-of-business',
+      'theme': 'theme',
+      'topic': 'topic',
+      'marketing program': 'marketing-program',
+      'campaign': 'page_campaign',
+      'research type': 'research-type',
+      'type': 'research-type',
+    };
+
+    // Research Type: extracted name → AEM slug
+    const researchTypeMap = {
+      'commentary': 'commentary',
+      'insights in action': 'product-insight',
+      'research insights': 'research',
+      'blog': 'blog',
+    };
+
+    function slugify(str) {
+      return str.toLowerCase().trim()
+        .replace(/&/g, '-and-')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    }
+
+    function resolveSlug(namespace, value) {
+      // Campaign: use only text before parenthesis as slug
+      if (namespace === 'page_campaign') {
+        const parenIdx = value.indexOf('(');
+        const raw = parenIdx !== -1 ? value.substring(0, parenIdx).trim() : value.trim();
+        return slugify(raw);
+      }
+      // Research Type: use manual mapping
+      if (namespace === 'research-type') {
+        const mapped = researchTypeMap[value.toLowerCase().trim()];
+        if (mapped) return mapped;
+      }
+      return slugify(value);
+    }
+
+    // 6a. Read existing tags from page
+    const pageJson = await fetch(jcrContent + '.json', { headers: { 'CSRF-Token': token } }).then(r => r.json());
+    const existingTags = Array.isArray(pageJson['cq:tags']) ? pageJson['cq:tags']
+      : pageJson['cq:tags'] ? [pageJson['cq:tags']] : [];
+    console.log('   Existing tags (' + existingTags.length + '):');
+    existingTags.forEach(t => console.log('     ✓', t));
+
+    // 6b. Resolve each article tag
+    const articleTags = JSON.parse(\`${tagsJson}\`);
+    const newTags = [];
+    const skipped = [];
+    const notFound = [];
+
+    for (const tag of articleTags) {
+      const sep = tag.indexOf(' : ');
+      if (sep === -1) { notFound.push({ tag, reason: 'bad format (no " : " separator)' }); continue; }
+      const category = tag.substring(0, sep).trim();
+      const value = tag.substring(sep + 3).trim();
+      const namespace = catToNs[category.toLowerCase()];
+      if (!namespace) { notFound.push({ tag, reason: 'unknown category "' + category + '"' }); continue; }
+
+      const valueSlug = resolveSlug(namespace, value);
+      const tagId = namespace + ':' + valueSlug;
+
+      // Already on page?
+      if (existingTags.includes(tagId)) {
+        skipped.push({ tag, tagId });
+        continue;
+      }
+
+      // Verify tag exists in AEM
+      const check = await fetch('/content/cq:tags/' + namespace + '/' + valueSlug + '.json', {
+        headers: { 'CSRF-Token': token }
+      });
+      if (check.ok) {
+        newTags.push({ tag, tagId });
+        console.log('   ✅ "' + tag + '" → ' + tagId);
+      } else {
+        notFound.push({ tag, reason: tagId + ' does not exist in AEM (HTTP ' + check.status + ')' });
+      }
+    }
+
+    if (skipped.length) {
+      console.log('   \\n   Already on page (' + skipped.length + '):');
+      skipped.forEach(t => console.log('     ⏭', t.tag, '→', t.tagId));
+    }
+    if (notFound.length) {
+      console.log('   \\n   Skipped — not found (' + notFound.length + '):');
+      notFound.forEach(t => console.log('     ⚠️', t.tag, '—', t.reason));
+    }
+
+    // 6c. Merge and save
+    if (newTags.length === 0) {
+      console.log('   \\n   No new tags to add.');
+    } else {
+      const allTags = [...existingTags, ...newTags.map(t => t.tagId)];
+      console.log('   \\n   Saving ' + allTags.length + ' total (' + existingTags.length + ' existing + ' + newTags.length + ' new)...');
+      const p = new URLSearchParams();
+      allTags.forEach(t => p.append('cq:tags', t));
+      p.set('cq:tags@TypeHint', 'String[]');
+      r = await post(jcrContent, p);
+      console.log('   Tags save:', ok(r) ? '✅ Done' : '❌ Status ' + r.status);
+      if (!ok(r)) console.log('   Response:', await r.text());
+    }
+  } catch(e) { console.error('   ❌ Tags error:', e.message, e); }
+
+  // ── Summary ──
+  console.log('\\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('📝 Edit page: /editor.html' + pagePath + '.html');
+  console.log('📂 Sites view: /ui#/aem/sites.html' + parentPath);
+  console.log('🖼 DAM assets: /ui#/aem/assets.html${damBase}/${slug}');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+})();
+`.trim()
+
+    setPublishScript(script)
+    setShowPublishScript(true)
+    setScriptLabel('AEM Create Page Script')
   }
 
   if (loading || loadingArticle) return (
@@ -438,7 +733,7 @@ export default function ArticlePage() {
     },
     layout: {
       display: 'grid', gridTemplateColumns: '1fr 220px', minHeight: 'calc(100vh - 52px)',
-      alignItems: 'start'
+      alignItems: 'start', maxWidth: '1400px', margin: '0 auto'
     },
     main: {
       padding: '1.5rem 2rem', display: 'grid', gap: '1rem', minWidth: 0
@@ -490,6 +785,23 @@ export default function ArticlePage() {
 
         {/* ── Main content ── */}
         <div style={s.main}>
+
+          {/* Tab bar */}
+          <div style={{ display: 'flex', gap: '0', borderBottom: '2px solid #e5e5e5', marginBottom: '0.25rem' }}>
+            {[{ key: 'metadata', label: 'Metadata' }, { key: 'content', label: 'Content' }].map(tab => (
+              <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{
+                padding: '0.6rem 1.25rem', fontSize: '0.82rem', fontWeight: '600',
+                color: activeTab === tab.key ? '#111' : '#999',
+                background: 'none', border: 'none', cursor: 'pointer',
+                borderBottom: activeTab === tab.key ? '2px solid #111' : '2px solid transparent',
+                marginBottom: '-2px'
+              }}>
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {activeTab === 'metadata' && (<>
 
           {/* Metadata */}
           <Section title="Metadata">
@@ -561,13 +873,17 @@ export default function ArticlePage() {
             </div>
           </Section>
 
+          </>)}
+
+          {activeTab === 'content' && (<>
+
           {/* Key Findings */}
           {article.bullets?.length > 0 && (
             <Section title="Key Findings">
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem', gap: '0.4rem' }}>
-                <CopyBtn label="Copy styled" copied={copied['bullets_rich']}
+                <CopyBtn label="Copy" copied={copied['bullets_rich']}
                   onCopy={() => copyRich('bullets_rich', buildKeyFindingsHtml(article.bullets))} />
-                <CopyBtn label="Copy text" copied={copied['bullets']}
+                <CopyBtn label="Copy plain text" copied={copied['bullets']}
                   onCopy={() => copy('bullets', article.bullets.map((b, i) => `${i + 1}. ${b}`).join('\n'))} />
               </div>
               <ul style={{ margin: 0, paddingLeft: '1.25rem', display: 'grid', gap: '0.4rem' }}>
@@ -592,10 +908,10 @@ export default function ArticlePage() {
                         <span style={{ fontSize: '11px', fontWeight: '600', color: '#999', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Text block {blockIdx + 1}</span>
                       </div>
                       <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <CopyBtn label="Copy styled" copied={copied[`block_rich_${blockIdx}`]}
+                        <CopyBtn label="Copy" copied={copied[`block_rich_${blockIdx}`]}
                           onCopy={() => copyRich(`block_rich_${blockIdx}`, wrapBodyHtml(block.html))} />
-                        <CopyBtn label="Copy HTML" copied={copied[`block_${blockIdx}`]}
-                          onCopy={() => copy(`block_${blockIdx}`, block.html)} />
+                        <CopyBtn label="Copy plain text" copied={copied[`block_${blockIdx}`]}
+                          onCopy={() => copy(`block_${blockIdx}`, stripHtml(block.html))} />
                       </div>
                     </div>
                     <div style={{ padding: '12px', fontSize: '0.875rem', lineHeight: '1.7', color: '#333' }}
@@ -627,9 +943,9 @@ export default function ArticlePage() {
                         {block.title && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <span style={{ flex: 1, fontSize: '1rem', fontWeight: '700', color: '#111' }}>{block.title}</span>
-                            <CopyBtn label="Styled" copied={copied[`etitle_rich_${blockIdx}`]}
+                            <CopyBtn label="Copy" copied={copied[`etitle_rich_${blockIdx}`]}
                               onCopy={() => copyRich(`etitle_rich_${blockIdx}`, `<p><span style="${inlineStyle(MSCI_STYLES.headline3)}">${block.title}</span></p>`)} />
-                            <CopyBtn copied={copied[`etitle_${blockIdx}`]} onCopy={() => copy(`etitle_${blockIdx}`, `<h3>${block.title}</h3>`)} />
+                            <CopyBtn label="Copy plain text" copied={copied[`etitle_${blockIdx}`]} onCopy={() => copy(`etitle_${blockIdx}`, block.title)} />
                           </div>
                         )}
                         <ExhibitAsset exhibit={exhibit} onExpired={refreshAssets} />
@@ -675,9 +991,9 @@ export default function ArticlePage() {
                         {block.caption && (
                           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
                             <span style={{ flex: 1, fontSize: '0.82rem', color: '#666', lineHeight: '1.5', fontStyle: 'italic' }}>{block.caption}</span>
-                            <CopyBtn label="Styled" copied={copied[`ecap_rich_${blockIdx}`]}
+                            <CopyBtn label="Copy" copied={copied[`ecap_rich_${blockIdx}`]}
                               onCopy={() => copyRich(`ecap_rich_${blockIdx}`, buildCaptionHtml(block.caption))} />
-                            <CopyBtn copied={copied[`ecap_${blockIdx}`]} onCopy={() => copy(`ecap_${blockIdx}`, block.caption)} />
+                            <CopyBtn label="Copy plain text" copied={copied[`ecap_${blockIdx}`]} onCopy={() => copy(`ecap_${blockIdx}`, block.caption)} />
                           </div>
                         )}
                       </div>
@@ -693,10 +1009,10 @@ export default function ArticlePage() {
           {article.footnotes?.length > 0 && (
             <Section title={`Footnotes (${article.footnotes.length})`}>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem', gap: '0.4rem' }}>
-                <CopyBtn label="Copy styled" copied={copied['footnotes_rich']}
+                <CopyBtn label="Copy" copied={copied['footnotes_rich']}
                   onCopy={() => copyRich('footnotes_rich', buildFootnotesHtml(article.footnotes))} />
-                <CopyBtn label="Copy HTML" copied={copied['footnotes']}
-                  onCopy={() => copy('footnotes', article.footnotes.map(f => `<p>${f.number} ${f.text}</p>`).join('\n'))} />
+                <CopyBtn label="Copy plain text" copied={copied['footnotes']}
+                  onCopy={() => copy('footnotes', article.footnotes.map(f => `${f.number} ${stripHtml(f.text)}`).join('\n'))} />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {article.footnotes.map((f, i) => (
@@ -734,32 +1050,7 @@ export default function ArticlePage() {
             )}
           </Section>
 
-          {/* AEM Script output */}
-          {showPublishScript && publishScript && (
-            <Section title="AEM Publish Script">
-              <div style={{ backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px', padding: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                  <p style={{ fontSize: '0.85rem', fontWeight: '600', color: '#0c4a6e', margin: 0 }}>Script ready for AEM console</p>
-                  <CopyBtn label="Copy script" copied={copied['script']} onCopy={() => copy('script', publishScript)} />
-                </div>
-                <p style={{ fontSize: '0.8rem', color: '#075985', margin: '0 0 0.75rem', lineHeight: '1.6' }}>
-                  1. Open{' '}
-                  <a href="https://author-p125318-e1369672.adobeaemcloud.com" target="_blank" rel="noreferrer" style={{ color: '#1a6fa8' }}>
-                    AEM Author
-                  </a><br />
-                  2. DevTools (F12) → Console<br />
-                  3. Paste the script and press Enter
-                </p>
-                <code style={{
-                  display: 'block', backgroundColor: '#e0f2fe', padding: '0.75rem', borderRadius: '4px',
-                  fontSize: '0.72rem', wordBreak: 'break-all', lineHeight: '1.5', color: '#0c4a6e',
-                  maxHeight: '120px', overflowY: 'auto', whiteSpace: 'pre-wrap'
-                }}>
-                  {publishScript}
-                </code>
-              </div>
-            </Section>
-          )}
+          </>)}
 
         </div>
 
@@ -793,14 +1084,34 @@ export default function ArticlePage() {
             {previewCopied ? 'Link copied!' : 'Copy preview link'}
           </button>
 
+          {article.sharepoint_folder_url && (
+            <a href={article.sharepoint_folder_url} target="_blank" rel="noopener noreferrer" style={{
+              ...s.actionBtn, backgroundColor: '#f3f0ff', borderColor: '#ddd6fe', color: '#6d28d9'
+            }}>
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <path d="M2 4h5l2 2h5a1 1 0 011 1v6a1 1 0 01-1 1H2a1 1 0 01-1-1V5a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+              </svg>
+              SharePoint folder
+            </a>
+          )}
+
           <div style={s.sideDivider} />
           <div style={s.sideLabel}>Publish</div>
 
-          <button onClick={publishToAEM} style={{ ...s.actionBtn, backgroundColor: '#fff1f2', borderColor: '#fecaca', color: '#c8102e' }}>
+          <button onClick={publishAssetsToDAM} style={{ ...s.actionBtn, backgroundColor: '#fff1f2', borderColor: '#fecaca', color: '#c8102e' }}>
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
               <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
             </svg>
-            Publish to AEM
+            Publish assets to AEM DAM
+          </button>
+
+          <button onClick={createAEMPage} style={{ ...s.actionBtn, backgroundColor: '#fefce8', borderColor: '#fde68a', color: '#92400e' }}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <path d="M4 2h5l4 4v8a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+              <path d="M9 2v4h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+              <path d="M6 10h4M8 8v4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+            </svg>
+            Create AEM Page
           </button>
 
           <button onClick={() => {
@@ -869,6 +1180,82 @@ export default function ArticlePage() {
 
         </aside>
       </div>
+
+      {/* AEM Script fullscreen modal */}
+      {showPublishScript && publishScript && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '2rem',
+        }} onClick={() => setShowPublishScript(false)}>
+          <div style={{
+            backgroundColor: '#0f172a', borderRadius: '16px',
+            width: '100%', maxWidth: '820px', maxHeight: '90vh',
+            display: 'flex', flexDirection: 'column',
+            boxShadow: '0 25px 60px rgba(0,0,0,0.5)',
+            overflow: 'hidden',
+          }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{
+              padding: '1.25rem 1.5rem', borderBottom: '1px solid #1e293b',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#f1f5f9' }}>{scriptLabel}</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: '#64748b' }}>
+                  Paste in AEM Author DevTools console (F12)
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <button onClick={() => copy('script', publishScript)} style={{
+                  padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+                  fontSize: '0.85rem', fontWeight: 600,
+                  backgroundColor: copied['script'] ? '#065f46' : '#3b82f6',
+                  color: 'white', transition: 'all 0.2s',
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                }}>
+                  {copied['script'] ? (
+                    <><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8l4 4 6-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>Copied!</>
+                  ) : (
+                    <><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="8" height="8" rx="1" stroke="currentColor" strokeWidth="1.3"/><path d="M3 11V3a1 1 0 011-1h8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>Copy script</>
+                  )}
+                </button>
+                <button onClick={() => setShowPublishScript(false)} style={{
+                  padding: '8px', borderRadius: '8px', border: '1px solid #334155',
+                  backgroundColor: 'transparent', color: '#94a3b8', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                </button>
+              </div>
+            </div>
+            {/* Steps */}
+            <div style={{ padding: '0.75rem 1.5rem', borderBottom: '1px solid #1e293b', display: 'flex', gap: '1.5rem' }}>
+              {['Open AEM Author', 'DevTools (F12) \u2192 Console', 'Paste & Enter'].map((step, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{
+                    width: '22px', height: '22px', borderRadius: '50%',
+                    backgroundColor: '#1e293b', color: '#94a3b8',
+                    fontSize: '0.7rem', fontWeight: 700,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>{i + 1}</span>
+                  <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>{step}</span>
+                </div>
+              ))}
+            </div>
+            {/* Code */}
+            <div style={{ flex: 1, overflow: 'auto', padding: '1.25rem 1.5rem' }}>
+              <pre style={{
+                margin: 0, fontSize: '0.82rem', lineHeight: '1.65',
+                color: '#e2e8f0', fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              }}>{publishScript}</pre>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }

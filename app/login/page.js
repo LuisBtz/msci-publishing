@@ -1,17 +1,17 @@
 'use client'
 import { useState } from 'react'
-import { createClient } from '@supabase/supabase-js'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-)
+import { createBrowserClient } from '@supabase/ssr'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  )
 
 const handleLogin = async (e) => {
   e.preventDefault()
@@ -24,7 +24,8 @@ const handleLogin = async (e) => {
   })
 
   if (error) {
-      setError('Invalid email or password')
+    setError(error.message)
+    setLoading(false)
     return
   }
 

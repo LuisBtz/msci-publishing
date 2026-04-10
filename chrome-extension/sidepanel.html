@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MSCI AEM Publisher</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <!-- Header -->
+  <header id="header">
+    <div class="header-title">
+      <span class="header-logo">M</span>
+      <span>AEM Publisher</span>
+    </div>
+    <div id="connection-status" class="status-dot disconnected" title="Not connected to AEM"></div>
+  </header>
+
+  <!-- Step Indicator -->
+  <div id="steps-bar">
+    <div class="step active" data-step="1">
+      <div class="step-number">1</div>
+      <div class="step-label">Select</div>
+    </div>
+    <div class="step-line"></div>
+    <div class="step" data-step="2">
+      <div class="step-number">2</div>
+      <div class="step-label">Assets</div>
+    </div>
+    <div class="step-line"></div>
+    <div class="step" data-step="3">
+      <div class="step-number">3</div>
+      <div class="step-label">Page</div>
+    </div>
+    <div class="step-line"></div>
+    <div class="step" data-step="4">
+      <div class="step-number">4</div>
+      <div class="step-label">Content</div>
+    </div>
+  </div>
+
+  <!-- Step 1: Article Selection -->
+  <section id="step-1" class="step-content active">
+    <div class="section-header">
+      <h2>Select Article</h2>
+      <button id="btn-refresh" class="btn-icon" title="Refresh articles">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.65 2.35A7.96 7.96 0 008 0C3.58 0 .01 3.58.01 8S3.58 16 8 16c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 018 14 6 6 0 012 8a6 6 0 016-6c1.66 0 3.14.69 4.22 1.78L9 7h7V0l-2.35 2.35z" fill="currentColor"/></svg>
+      </button>
+    </div>
+    <div id="articles-filter">
+      <input type="text" id="search-input" placeholder="Search articles..." />
+      <div class="filter-chips">
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="in-progress">In Progress</button>
+        <button class="chip" data-filter="in-review">In Review</button>
+        <button class="chip" data-filter="approved">Approved</button>
+      </div>
+    </div>
+    <div id="articles-list">
+      <div class="loading-spinner">Loading articles...</div>
+    </div>
+  </section>
+
+  <!-- Step 2: Publish Assets to DAM -->
+  <section id="step-2" class="step-content">
+    <button class="btn-back" id="btn-back-2">&larr; Back to articles</button>
+    <div class="selected-article-header">
+      <h2 id="step2-title"></h2>
+      <span id="step2-status" class="badge"></span>
+    </div>
+
+    <div class="info-card">
+      <h3>Assets Summary</h3>
+      <div id="assets-summary">
+        <div class="summary-row">
+          <span>Exhibits</span>
+          <span id="exhibits-count" class="count-badge">0</span>
+        </div>
+        <div class="summary-row">
+          <span>Banners</span>
+          <span id="banners-count" class="count-badge">0</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="info-card">
+      <h3>DAM Target</h3>
+      <code id="dam-path" class="path-display"></code>
+      <a id="dam-link" href="#" target="_blank" class="link-external">Open in AEM DAM</a>
+    </div>
+
+    <button id="btn-publish-assets" class="btn-primary">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1v10M4 5l4-4 4 4M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Publish Assets to DAM
+    </button>
+
+    <div id="assets-log" class="console-log hidden"></div>
+
+    <button id="btn-goto-step3" class="btn-secondary hidden">
+      Continue to Create Page &rarr;
+    </button>
+  </section>
+
+  <!-- Step 3: Create AEM Page -->
+  <section id="step-3" class="step-content">
+    <button class="btn-back" id="btn-back-3">&larr; Back to Assets</button>
+    <div class="selected-article-header">
+      <h2 id="step3-title"></h2>
+    </div>
+
+    <div class="info-card">
+      <h3>Page Properties</h3>
+      <div class="prop-grid">
+        <div class="prop-item"><label>Slug</label><span id="prop-slug"></span></div>
+        <div class="prop-item"><label>Type</label><span id="prop-type"></span></div>
+        <div class="prop-item"><label>Publish Date</label><span id="prop-date"></span></div>
+        <div class="prop-item"><label>Read Time</label><span id="prop-readtime"></span></div>
+        <div class="prop-item"><label>Authors</label><span id="prop-authors"></span></div>
+        <div class="prop-item"><label>Tags</label><span id="prop-tags"></span></div>
+      </div>
+    </div>
+
+    <button id="btn-create-page" class="btn-primary">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M9 1H3a1 1 0 00-1 1v12a1 1 0 001 1h10a1 1 0 001-1V6L9 1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 1v5h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Create AEM Page
+    </button>
+
+    <div id="page-log" class="console-log hidden"></div>
+
+    <div id="page-links" class="info-card hidden">
+      <h3>Page Created</h3>
+      <a id="link-edit-page" href="#" target="_blank" class="link-external">Edit page in AEM</a>
+      <a id="link-sites-view" href="#" target="_blank" class="link-external">Open in Sites view</a>
+    </div>
+
+    <button id="btn-goto-step4" class="btn-secondary hidden">
+      Continue to Content &rarr;
+    </button>
+  </section>
+
+  <!-- Step 4: Content (Coming Soon) -->
+  <section id="step-4" class="step-content">
+    <button class="btn-back" id="btn-back-4">&larr; Back to Page</button>
+    <div class="coming-soon">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#ccc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <h2>Load Content</h2>
+      <p>Automatic content injection into AEM components is coming soon.</p>
+      <p class="hint">For now, use the copy buttons in the Publishing Platform to paste content into AEM components manually.</p>
+    </div>
+  </section>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
