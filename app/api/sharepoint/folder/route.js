@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { graphRequest, downloadFile, listFolder, DRIVE_ID } from '@/lib/graph'
+import { buildExhibitPaths } from '@/lib/exhibit-parser'
 
 function extractFolderPath(sharepointUrl) {
   try {
@@ -16,91 +17,82 @@ function extractFolderPath(sharepointUrl) {
   } catch { return null }
 }
 
-// Agrupa archivos estáticos en pares Desktop/Mobile
-function groupStaticExhibits(files) {
-  const desktopFiles = files.filter(f =>
-    (f.name.endsWith('.svg') || f.name.endsWith('.webp')) &&
-    f.name.includes('_Desktop')
-  )
-
-  return desktopFiles.map(desktop => {
-    // Extraer el identificador base: 1600px-GICS_Desktop.svg → GICS
-    const baseName = desktop.name
-      .replace(/^\d+px-/, '')     // quitar prefijo de pixels
-      .replace('_Desktop.svg', '')
-      .replace('_Desktop.webp', '')
-
-    // Buscar el par mobile
-    const mobile = files.find(f =>
-      f.name.includes('_Mobile') &&
-      f.name.includes(baseName)
+// Locate the Charts/Exhibits folder (case-insensitive) inside a listing.
+function findExhibitsFolder(rootFiles) {
+  for (const folderName of ['Charts', 'Exhibits']) {
+    const match = rootFiles.find(
+      f => f.folder && f.name.toLowerCase() === folderName.toLowerCase()
     )
-
-    return {
-      type: 'static',
-      base_name: baseName,
-      desktop: {
-        filename: desktop.name,
-        itemId: desktop.id,
-        downloadUrl: desktop['@microsoft.graph.downloadUrl'] || null
-      },
-      mobile: mobile ? {
-        filename: mobile.name,
-        itemId: mobile.id,
-        downloadUrl: mobile['@microsoft.graph.downloadUrl'] || null
-      } : null
-    }
-  }).sort((a, b) => a.base_name.localeCompare(b.base_name))
+    if (match) return match
+  }
+  return null
 }
 
-// Agrupa archivos interactivos en pares JSON/HTML
-// Toma solo la versión más reciente de cada nombre base
-function groupInteractiveExhibits(files) {
-  const jsonFiles = files.filter(f =>
-    f.name.endsWith('.json') &&
-    !f.name.includes('_Desktop') &&
-    !f.name.includes('_Mobile')
+// Reads the SharePoint folder and returns the full exhibit_paths payload.
+// Exported so /api/sharepoint/rescan-exhibits can reuse exactly the same logic.
+export async function readSharepointFolder(folderUrl) {
+  const folderPath = extractFolderPath(folderUrl)
+  if (!folderPath) {
+    const err = new Error('URL de SharePoint inválida')
+    err.status = 400
+    throw err
+  }
+
+  const encodedPath = encodeURIComponent(folderPath)
+  const folderItem = await graphRequest(`/drives/${DRIVE_ID}/root:${encodedPath}`)
+  const rootFiles = await listFolder(folderItem.id)
+
+  // ── Docx de intake (más reciente con "package" en el nombre) ────────────
+  const docxFiles = rootFiles.filter(f =>
+    f.name.toLowerCase().endsWith('.docx') &&
+    f.name.toLowerCase().includes('package')
   )
+  const docxFile = docxFiles.sort((a, b) =>
+    new Date(b.lastModifiedDateTime) - new Date(a.lastModifiedDateTime)
+  )[0] || null
 
-  // Agrupar por nombre base (sin el número de versión al final)
-  // IPO_security_weights.json y IPO_security_weights 2.json → mismo grupo
-  const groups = {}
-  jsonFiles.forEach(f => {
-    // Extraer nombre base quitando el número de versión " 2", " 3", etc.
-    const baseName = f.name
-      .replace(/\.json$/, '')
-      .replace(/\s+\d+$/, '')  // quitar " 2", " 3", etc al final
-      .trim()
+  // ── Banners (webp) ───────────────────────────────────────────────────────
+  const banners = {}
+  try {
+    const bannersFolder = rootFiles.find(f =>
+      f.folder && f.name.toLowerCase() === 'banners'
+    )
+    if (bannersFolder) {
+      const bannerSubItems = await listFolder(bannersFolder.id)
+      const webpFolder = bannerSubItems.find(f =>
+        f.folder && f.name.toLowerCase() === 'webp'
+      )
+      const bannerFiles = webpFolder
+        ? await listFolder(webpFolder.id)
+        : bannerSubItems.filter(f => f.name.endsWith('.webp'))
 
-    if (!groups[baseName]) groups[baseName] = []
-    groups[baseName].push(f)
-  })
-
-  // Para cada grupo, tomar el más reciente por fecha
-  return Object.entries(groups).map(([baseName, versions]) => {
-    const latest = versions.sort((a, b) =>
-      new Date(b.lastModifiedDateTime) - new Date(a.lastModifiedDateTime)
-    )[0]
-
-    // Buscar el par HTML del mismo archivo
-    const htmlName = latest.name.replace('.json', '.html')
-    const htmlFile = files.find(f => f.name === htmlName)
-
-    return {
-      type: 'interactive',
-      base_name: baseName,
-      json: {
-        filename: latest.name,
-        itemId: latest.id,
-        downloadUrl: latest['@microsoft.graph.downloadUrl'] || null
-      },
-      html: htmlFile ? {
-        filename: htmlFile.name,
-        itemId: htmlFile.id,
-        downloadUrl: htmlFile['@microsoft.graph.downloadUrl'] || null
-      } : null
+      for (const f of bannerFiles) {
+        if (f.name.endsWith('.webp')) {
+          banners[f.name] = {
+            filename: f.name,
+            itemId: f.id,
+            downloadUrl: f['@microsoft.graph.downloadUrl'] || null
+          }
+        }
+      }
     }
-  }).sort((a, b) => a.base_name.localeCompare(b.base_name))
+  } catch (e) {
+    console.log('No banners found:', e.message)
+  }
+
+  // ── Exhibits (static + interactive) desde Charts/ o Exhibits/ ────────────
+  let exhibitPaths = { items: [], statics: [], interactives: [], summary: [] }
+  const exhibitsFolder = findExhibitsFolder(rootFiles)
+  if (exhibitsFolder) {
+    try {
+      const files = await listFolder(exhibitsFolder.id)
+      exhibitPaths = buildExhibitPaths(files)
+    } catch (e) {
+      console.log('Error reading exhibits folder:', e.message)
+    }
+  }
+
+  return { rootFiles, folderItem, docxFile, banners, exhibitPaths }
 }
 
 export async function POST(req) {
@@ -108,25 +100,7 @@ export async function POST(req) {
     const { folderUrl } = await req.json()
     if (!folderUrl) return NextResponse.json({ error: 'No folder URL provided' }, { status: 400 })
 
-    const folderPath = extractFolderPath(folderUrl)
-    if (!folderPath) return NextResponse.json({ error: 'URL de SharePoint inválida' }, { status: 400 })
-
-    // Obtener el item de la carpeta
-    const encodedPath = encodeURIComponent(folderPath)
-    const folderItem = await graphRequest(`/drives/${DRIVE_ID}/root:${encodedPath}`)
-    const folderId = folderItem.id
-
-    // Listar contenido de la carpeta raíz
-    const rootFiles = await listFolder(folderId)
-
-    // Encontrar el .docx con "package" más reciente
-    const docxFiles = rootFiles.filter(f =>
-      f.name.toLowerCase().endsWith('.docx') &&
-      f.name.toLowerCase().includes('package')
-    )
-    const docxFile = docxFiles.sort((a, b) =>
-      new Date(b.lastModifiedDateTime) - new Date(a.lastModifiedDateTime)
-    )[0]
+    const { docxFile, banners, exhibitPaths } = await readSharepointFolder(folderUrl)
 
     if (!docxFile) {
       return NextResponse.json({
@@ -134,83 +108,11 @@ export async function POST(req) {
       }, { status: 404 })
     }
 
-    // Descargar el .docx
     const docxBuffer = await downloadFile(docxFile.id)
     const docxBase64 = docxBuffer.toString('base64')
 
-    // ── BANNERS ──────────────────────────────────────────────────────────────
-    let banners = {}
-    try {
-      const bannersFolder = rootFiles.find(f =>
-        f.name.toLowerCase() === 'banners' && f.folder
-      )
-      if (bannersFolder) {
-        const bannerSubItems = await listFolder(bannersFolder.id)
-        const webpFolder = bannerSubItems.find(f =>
-          f.name.toLowerCase() === 'webp' && f.folder
-        )
-        const bannerFiles = webpFolder
-          ? await listFolder(webpFolder.id)
-          : bannerSubItems.filter(f => f.name.endsWith('.webp'))
-
-        bannerFiles.forEach(f => {
-  if (f.name.endsWith('.webp')) {
-    banners[f.name] = {
-      filename: f.name,
-      itemId: f.id,
-      downloadUrl: f['@microsoft.graph.downloadUrl'] || null
-    }
-  }
-})
-      }
-    } catch (e) {
-      console.log('No banners found:', e.message)
-    }
-
-    // ── EXHIBITS ESTÁTICOS (desde /Charts/ o /Exhibits/) ─────────────────────
-    let staticExhibits = []
-    for (const folderName of ['Charts', 'Exhibits']) {
-      try {
-        const exhibitFolder = rootFiles.find(f =>
-          f.name.toLowerCase() === folderName.toLowerCase() && f.folder
-        )
-        if (exhibitFolder) {
-          const files = await listFolder(exhibitFolder.id)
-          staticExhibits = groupStaticExhibits(files)
-          break
-        }
-      } catch (e) {
-        console.log(`No ${folderName} folder:`, e.message)
-      }
-    }
-
-    // ── EXHIBITS INTERACTIVOS (desde la raíz del proyecto) ───────────────────
-    const interactiveExhibits = groupInteractiveExhibits(rootFiles)
-
-    // ── COMBINAR todos los exhibits con su tipo ───────────────────────────────
-    // Los interactivos y los estáticos se mantienen separados
-    // El matching con el orden del Word lo hace Claude en el siguiente paso
-    const allExhibits = {
-      statics: staticExhibits,
-      interactives: interactiveExhibits,
-      // Lista plana para facilitar el matching de Claude
-      summary: [
-        ...staticExhibits.map((e, i) => ({
-          index: i,
-          type: 'static',
-          base_name: e.base_name,
-          desktop_filename: e.desktop.filename,
-          mobile_filename: e.mobile?.filename || null
-        })),
-        ...interactiveExhibits.map((e, i) => ({
-          index: staticExhibits.length + i,
-          type: 'interactive',
-          base_name: e.base_name,
-          json_filename: e.json.filename,
-          html_filename: e.html?.filename || null
-        }))
-      ]
-    }
+    const staticsCount = exhibitPaths.statics.length
+    const interactivesCount = exhibitPaths.interactives.length
 
     return NextResponse.json({
       docx: {
@@ -218,18 +120,19 @@ export async function POST(req) {
         base64: docxBase64
       },
       banners,
-      exhibits: allExhibits,
-      exhibitsFound: staticExhibits.length > 0 || interactiveExhibits.length > 0,
+      exhibits: exhibitPaths,
+      exhibitsFound: exhibitPaths.items.length > 0,
       bannersFound: Object.keys(banners).length > 0,
       summary: {
-        statics: staticExhibits.length,
-        interactives: interactiveExhibits.length,
-        total: staticExhibits.length + interactiveExhibits.length
+        statics: staticsCount,
+        interactives: interactivesCount,
+        total: exhibitPaths.items.length
       }
     })
 
   } catch (err) {
     console.error('SharePoint error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    const status = err.status || 500
+    return NextResponse.json({ error: err.message }, { status })
   }
 }

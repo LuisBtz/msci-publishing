@@ -9,6 +9,7 @@ const supabase = createClient(
 
 // Regenera el downloadUrl de un item usando su itemId
 async function refreshItemUrl(itemId) {
+  if (!itemId) return null
   try {
     const data = await graphRequest(`/drives/${DRIVE_ID}/items/${itemId}`)
     return data['@microsoft.graph.downloadUrl'] || null
@@ -17,44 +18,36 @@ async function refreshItemUrl(itemId) {
   }
 }
 
-// Recorre la estructura de exhibits y regenera todos los downloadUrls
-async function refreshExhibitUrls(exhibits) {
+// Regenera downloadUrl de todas las partes de un item (desktop/mobile/json/html)
+async function refreshItemParts(item) {
+  if (!item) return item
+  const out = { ...item }
+  if (item.desktop) out.desktop = { ...item.desktop, downloadUrl: await refreshItemUrl(item.desktop.itemId) }
+  if (item.mobile)  out.mobile  = { ...item.mobile,  downloadUrl: await refreshItemUrl(item.mobile.itemId) }
+  if (item.json)    out.json    = { ...item.json,    downloadUrl: await refreshItemUrl(item.json.itemId) }
+  if (item.html)    out.html    = { ...item.html,    downloadUrl: await refreshItemUrl(item.html.itemId) }
+  return out
+}
+
+// Regenera downloadUrls dentro del objeto exhibit_paths (items[] + legacy shapes).
+async function refreshExhibitPaths(exhibits) {
   if (!exhibits) return exhibits
 
-  const { statics = [], interactives = [], summary = [] } = exhibits
+  const items = exhibits.items || []
+  const refreshedItems = await Promise.all(items.map(refreshItemParts))
 
   const refreshedStatics = await Promise.all(
-    statics.map(async (e) => ({
-      ...e,
-      desktop: e.desktop ? {
-        ...e.desktop,
-        downloadUrl: await refreshItemUrl(e.desktop.itemId)
-      } : null,
-      mobile: e.mobile ? {
-        ...e.mobile,
-        downloadUrl: await refreshItemUrl(e.mobile.itemId)
-      } : null
-    }))
+    (exhibits.statics || []).map(refreshItemParts)
   )
-
   const refreshedInteractives = await Promise.all(
-    interactives.map(async (e) => ({
-      ...e,
-      json: e.json ? {
-        ...e.json,
-        downloadUrl: await refreshItemUrl(e.json.itemId)
-      } : null,
-      html: e.html ? {
-        ...e.html,
-        downloadUrl: await refreshItemUrl(e.html.itemId)
-      } : null
-    }))
+    (exhibits.interactives || []).map(refreshItemParts)
   )
 
   return {
+    items: refreshedItems,
     statics: refreshedStatics,
     interactives: refreshedInteractives,
-    summary
+    summary: exhibits.summary || []
   }
 }
 
@@ -63,19 +56,16 @@ export async function POST(req) {
     const { articleId } = await req.json()
     if (!articleId) return NextResponse.json({ error: 'No articleId provided' }, { status: 400 })
 
-    // Obtener el artículo
     const { data: article, error } = await supabase
       .from('articles')
-      .select('id, exhibit_paths, banner_paths')
+      .select('id, exhibit_paths, banner_paths, body_blocks')
       .eq('id', articleId)
       .single()
 
     if (error || !article) return NextResponse.json({ error: 'Article not found' }, { status: 404 })
 
-    // Regenerar URLs de exhibits
-    const refreshedExhibits = await refreshExhibitUrls(article.exhibit_paths)
+    const refreshedExhibits = await refreshExhibitPaths(article.exhibit_paths)
 
-    // Regenerar URLs de banners
     const refreshedBanners = {}
     if (article.banner_paths) {
       for (const [ratio, banner] of Object.entries(article.banner_paths)) {
@@ -86,46 +76,17 @@ export async function POST(req) {
       }
     }
 
-    // También actualizar los downloadUrls dentro de body_blocks
-    const { data: fullArticle } = await supabase
-      .from('articles')
-      .select('body_blocks')
-      .eq('id', articleId)
-      .single()
-
-    let refreshedBodyBlocks = fullArticle?.body_blocks || []
+    // Refrescar downloadUrls dentro de body_blocks.sharepoint_data
+    let refreshedBodyBlocks = article.body_blocks || []
     if (refreshedBodyBlocks.length > 0) {
       refreshedBodyBlocks = await Promise.all(
         refreshedBodyBlocks.map(async (block) => {
           if (block.type !== 'exhibit' || !block.sharepoint_data) return block
-
-          const sd = block.sharepoint_data
-          if (sd.exhibit_type === 'static' || sd.type === 'static') {
-            return {
-              ...block,
-              sharepoint_data: {
-                ...sd,
-                desktop: sd.desktop ? { ...sd.desktop, downloadUrl: await refreshItemUrl(sd.desktop.itemId) } : null,
-                mobile: sd.mobile ? { ...sd.mobile, downloadUrl: await refreshItemUrl(sd.mobile.itemId) } : null
-              }
-            }
-          }
-          if (sd.exhibit_type === 'interactive' || sd.type === 'interactive') {
-            return {
-              ...block,
-              sharepoint_data: {
-                ...sd,
-                json: sd.json ? { ...sd.json, downloadUrl: await refreshItemUrl(sd.json.itemId) } : null,
-                html: sd.html ? { ...sd.html, downloadUrl: await refreshItemUrl(sd.html.itemId) } : null
-              }
-            }
-          }
-          return block
+          return { ...block, sharepoint_data: await refreshItemParts(block.sharepoint_data) }
         })
       )
     }
 
-    // Guardar todo en Supabase
     await supabase.from('articles').update({
       exhibit_paths: refreshedExhibits,
       banner_paths: refreshedBanners,

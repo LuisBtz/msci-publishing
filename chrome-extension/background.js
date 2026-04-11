@@ -16,6 +16,48 @@ async function getActiveAEMTab() {
   return tab
 }
 
+// Find an open AEM editor.html tab for a specific page path. Looks across
+// every window because the user often opens the editor in a separate tab
+// via target="_blank" and then switches focus back to Sites/Assets to use
+// the side panel. The active tab in that case is NOT the editor, so we
+// need to locate the editor tab explicitly to inject the refresh script.
+//
+// Returns { tab, diag } where diag describes what we saw, so the caller
+// can surface a useful message in the side-panel log when nothing matches.
+async function findEditorTabForPage(slug) {
+  const diag = { totalAemTabs: 0, totalEditorTabs: 0, urls: [], reason: '' }
+
+  // Always query everything and filter manually. URL match patterns in
+  // chrome.tabs.query are picky and we observed them returning 0 results
+  // even when the editor was clearly open.
+  const allTabs = await chrome.tabs.query({})
+  const aemTabs = allTabs.filter(t => t.url && t.url.startsWith(AEM_HOST_PREFIX))
+  const editorTabs = aemTabs.filter(t => t.url.includes('/editor.html/'))
+
+  diag.totalAemTabs = aemTabs.length
+  diag.totalEditorTabs = editorTabs.length
+  // Show ALL aem tabs (up to 8) so the user can see why the editor wasn't found
+  diag.urls = aemTabs.slice(0, 8).map(t => t.url)
+
+  if (!editorTabs.length) {
+    diag.reason = aemTabs.length
+      ? `no editor.html tab open (saw ${aemTabs.length} other AEM tab(s) — Sites/Assets view doesn't have Granite.author)`
+      : 'no AEM tabs open at all'
+    return { tab: null, diag }
+  }
+
+  // Permissive match: any editor.html tab whose URL contains the slug.
+  const match = editorTabs.find(t => t.url.includes('/' + slug + '.html')) ||
+                editorTabs.find(t => t.url.includes('/' + slug))
+
+  if (!match) {
+    diag.reason = `${editorTabs.length} editor.html tab(s) open, none matching slug "${slug}"`
+    return { tab: null, diag }
+  }
+
+  return { tab: match, diag }
+}
+
 async function runInPage(func, args) {
   const tab = await getActiveAEMTab()
   if (!tab) return { success: false, error: 'Not on AEM Author tab. Open AEM in the active tab.' }
@@ -57,73 +99,125 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true
   }
 
+  if (message.type === 'CHECK_DAM_ASSETS') {
+    ;(async () => {
+      const result = await runInPage(checkDamAssetsInAEM, [message.slug])
+      sendResponse(result)
+    })()
+    return true
+  }
+
+  if (message.type === 'CHECK_PAGE_EXISTS') {
+    ;(async () => {
+      const result = await runInPage(checkPageExistsInAEM, [message.slug])
+      sendResponse(result)
+    })()
+    return true
+  }
+
   if (message.type === 'INSERT_KEY_FINDINGS') {
     ;(async () => {
-      const result = await runInPage(insertKeyFindingsInAEM, [message.slug, message.html])
+      const result = await runInPage(insertKeyFindingsInAEM, [message.slug, message.html, message.textAsJson])
 
-      // After writing content, use MAIN world to refresh the specific
-      // component editable in the AEM editor (this is what "Done" does)
+      // After writing content, refresh the editor tab so the user sees
+      // the new content without having to F5. The editor tab is often
+      // separate from the active tab (opened from step 3 with target=_blank),
+      // so we scan all windows for it. AEM Cloud loads editor.html inside
+      // an iframe of the /ui SPA shell, so we inject into all frames and
+      // pick the one that actually has Granite.author.
+      //
+      // High-level status goes to the side panel; detailed diagnostics
+      // (frame URLs, available APIs, persist errors) go to the AEM editor
+      // tab's DevTools console.
       if (result.success && result.targetPath) {
-        const tab = await getActiveAEMTab()
-        if (tab) {
+        const { tab: editorTab, diag } = await findEditorTabForPage(message.slug)
+        console.log('[KeyFindings] tab search', diag)
+
+        if (!editorTab) {
+          result.logs.push({
+            type: 'warn',
+            message: 'No se encontró el editor abierto — abre "Edit page in AEM" en el paso 3 y vuelve a intentar.'
+          })
+        } else {
           try {
-            const [refreshResult] = await chrome.scripting.executeScript({
-              target: { tabId: tab.id },
+            const injectionResults = await chrome.scripting.executeScript({
+              target: { tabId: editorTab.id, allFrames: true },
               world: 'MAIN',
-              func: (componentPath) => {
+              func: async (componentPath, html) => {
+                const out = { frameUrl: location.href }
+                const ns = window.Granite && window.Granite.author
+                if (!ns || !ns.editables) {
+                  console.debug('[KeyFindings/refresh] no Granite.author in', location.href)
+                  return out
+                }
+                out.hasGraniteAuthor = true
+
+                // Locate the editable by exact path match (with a /jcr:content fallback).
+                const total = ns.editables.length || 0
+                let editable = null
+                for (let i = 0; i < total; i++) {
+                  const ed = ns.editables[i]
+                  if (ed && ed.path === componentPath) { editable = ed; break }
+                }
+                if (!editable) {
+                  const altPath = componentPath.replace('/jcr:content/', '/')
+                  for (let i = 0; i < total; i++) {
+                    const ed = ns.editables[i]
+                    if (ed && ed.path === altPath) { editable = ed; break }
+                  }
+                }
+                if (!editable) {
+                  console.warn('[KeyFindings/refresh] editable not found for', componentPath, '(total=' + total + ')')
+                  out.reason = 'Editable not found'
+                  return out
+                }
+
+                console.log('[KeyFindings/refresh] persistence APIs:', ns.persistence ? Object.keys(ns.persistence) : 'none')
+
+                // PRIMARY: save via Granite.author.persistence so AEM runs
+                // the same persistence path the dialog Done uses.
                 try {
-                  const ns = window.Granite && window.Granite.author
-                  if (!ns) return { method: 'none', reason: 'No Granite.author' }
-
-                  // Method 1: Find the exact editable and refresh it
-                  if (ns.editables && ns.editables.find) {
-                    const editable = ns.editables.find(componentPath)
-                    if (editable) {
-                      // This is exactly what AEM does after dialog save
-                      if (typeof editable.refresh === 'function') {
-                        editable.refresh()
-                        return { method: 'editable.refresh' }
-                      }
-                    }
+                  if (ns.persistence && typeof ns.persistence.updateParagraph === 'function') {
+                    const ret = ns.persistence.updateParagraph(editable, { text: html, textIsRich: true, _charset_: 'utf-8' })
+                    if (ret && typeof ret.then === 'function') await ret
+                    out.persistMethod = 'persistence.updateParagraph'
                   }
+                } catch (e) {
+                  out.persistError = e.message || String(e)
+                  console.error('[KeyFindings/refresh] persistence.updateParagraph failed', e)
+                }
 
-                  // Method 2: Use the EditableActions to trigger afterEdit
-                  if (ns.edit && ns.edit.actions) {
-                    const editable = ns.editables && ns.editables.find(componentPath)
-                    if (editable && ns.edit.actions.REFRESH) {
-                      ns.edit.actions.doAction(ns.edit.actions.REFRESH, editable)
-                      return { method: 'EditableActions.REFRESH' }
-                    }
+                // Refresh the editor view so the new content shows immediately.
+                try {
+                  if (typeof editable.refresh === 'function') {
+                    const p = editable.refresh()
+                    if (p && typeof p.then === 'function') await p
+                    out.refreshMethod = 'editable.refresh'
                   }
-
-                  // Method 3: Reload the content frame entirely
-                  if (ns.ContentFrame && ns.ContentFrame.reload) {
-                    ns.ContentFrame.reload()
-                    return { method: 'ContentFrame.reload' }
-                  }
-
-                  // Method 4: Find content iframe and reload
-                  const iframe = document.getElementById('ContentFrame') ||
-                                 document.querySelector('iframe[name="ContentFrame"]')
-                  if (iframe) {
-                    iframe.contentWindow.location.reload()
-                    return { method: 'iframe.reload' }
-                  }
-
-                  return { method: 'none', reason: 'No refresh method available' }
-                } catch (e) { return { method: 'error', reason: e.message } }
+                } catch (e) {
+                  console.warn('[KeyFindings/refresh] editable.refresh failed', e)
+                }
+                return out
               },
-              args: [result.targetPath]
+              args: [result.targetPath, message.html]
             })
 
-            const refreshInfo = refreshResult?.result || { method: 'none' }
-            if (refreshInfo.method && refreshInfo.method !== 'none' && refreshInfo.method !== 'error') {
-              result.logs.push({ type: 'log', message: `   ✅ Editor refreshed via ${refreshInfo.method}` })
+            const chosen =
+              (injectionResults || []).map(i => i?.result).find(r => r && r.persistMethod) ||
+              (injectionResults || []).map(i => i?.result).find(r => r && r.hasGraniteAuthor) ||
+              (injectionResults || []).map(i => i?.result).find(Boolean) || {}
+            console.log('[KeyFindings] refresh result', chosen, 'frames=', injectionResults?.length)
+
+            if (chosen.persistMethod) {
+              result.logs.push({ type: 'log', message: 'Vista previa actualizada.' })
+            } else if (chosen.refreshMethod) {
+              result.logs.push({ type: 'log', message: 'Editor refrescado, pero la vista previa puede tardar en actualizarse.' })
             } else {
-              result.logs.push({ type: 'warn', message: `   ⚠️ Auto-refresh: ${refreshInfo.reason || 'unknown'} — may need manual refresh` })
+              result.logs.push({ type: 'warn', message: 'No se pudo refrescar el editor automáticamente — refresca la pestaña manualmente.' })
             }
           } catch (e) {
-            result.logs.push({ type: 'warn', message: '   ⚠️ Could not auto-refresh: ' + e.message })
+            console.error('[KeyFindings] refresh injection failed', e)
+            result.logs.push({ type: 'warn', message: 'No se pudo refrescar el editor automáticamente.' })
           }
         }
       }
@@ -447,172 +541,133 @@ async function createPageInAEM(params) {
 // like contentfragment, image, title, etc. that may also carry a 'text'
 // property.
 // ═══════════════════════════════════════════════════════════════════════════
-async function insertKeyFindingsInAEM(slug, html) {
+// Insert a "Key findings" bullet list into a blog-post page.
+//
+// This function is INJECTED into the AEM tab via chrome.scripting (ISOLATED
+// world), so it must be self-contained — no closure references.
+//
+// User-facing logs go into the `logs` array (rendered in the side panel).
+// Detailed technical logs go to `console.*` so they show up in the AEM
+// tab's DevTools console for debugging without cluttering the side panel.
+//
+// Property shape and the textAsJson AST format are documented in
+// memory/project_insert_key_findings_wip.md — change with care.
+async function insertKeyFindingsInAEM(slug, html, textAsJson) {
   const logs = []
   const log = (m) => logs.push({ type: 'log', message: m })
   const logErr = (m) => logs.push({ type: 'error', message: m })
   const logWarn = (m) => logs.push({ type: 'warn', message: m })
 
+  console.groupCollapsed('[KeyFindings] insert into ' + slug)
   try {
-    log('🔑 Fetching CSRF token...')
+    log('Conectando con AEM…')
     const token = (await fetch('/libs/granite/csrf/token.json').then(r => r.json())).token
-    if (!token) throw new Error('Could not get CSRF token')
+    if (!token) throw new Error('No se pudo obtener el token CSRF')
 
     const parentPath = '/content/msci/us/en/research-and-insights/blog-post'
-    const pagePath = parentPath + '/' + slug
-    const jcrContent = pagePath + '/jcr:content'
+    const jcrContent = parentPath + '/' + slug + '/jcr:content'
 
-    // Fetch the full page content tree
-    log('\n🔍 Reading page component tree...')
+    log('Buscando el componente "Key findings" en la página…')
     const pageTree = await fetch(jcrContent + '.infinity.json', {
       headers: { 'CSRF-Token': token }
     }).then(r => r.json())
+    if (!pageTree) throw new Error('No se pudo leer la página')
 
-    if (!pageTree) throw new Error('Could not read page tree')
-
-    // ── Collect ALL nodes that have a 'text' property (for diagnostics) ──
-    const allNodesWithText = []
-    // ── Collect only true RTE/text components (with text) ──
+    // ── Walk the JCR tree and collect every richtexteditor node, in
+    //    document order, so we can find the heading + its sibling target.
+    const RTE_TYPE = 'webmasters-aem/components/richtexteditor'
     const rteNodes = []
-    // ── Collect ALL RTE-like nodes, even empty ones without 'text' prop ──
-    const allRteNodes = []
-
-    // Known RTE resource type endings
-    const RTE_TYPE_KEYWORDS = ['/text', '/rte', '/richtext', '/richtexteditor']
-    // Known NON-RTE types to skip (even if they have a 'text' prop)
-    const SKIP_TYPES = ['contentfragment', 'image', 'title', 'button', 'teaser', 'embed', 'download']
-    // Known RTE node name prefixes (for nodes that may not have text prop yet)
-    const RTE_NODE_PREFIXES = ['text', 'richtexteditor']
-
-    function isRTEResourceType(resourceType) {
-      if (!resourceType) return false
-      const rt = resourceType.toLowerCase()
-      if (SKIP_TYPES.some(skip => rt.includes(skip))) return false
-      return RTE_TYPE_KEYWORDS.some(kw => rt.endsWith(kw) || rt.includes(kw + '/'))
-    }
-
-    function isRTENodeName(nodeName) {
-      if (!nodeName) return false
-      const nn = nodeName.toLowerCase()
-      return RTE_NODE_PREFIXES.some(prefix => nn === prefix || nn.startsWith(prefix + '_'))
-    }
-
-    function walkTree(node, path, nodeName) {
+    function walk(node, path) {
       if (!node || typeof node !== 'object') return
-
-      const resourceType = node['sling:resourceType'] || ''
-      const hasText = 'text' in node && typeof node.text === 'string'
-      const isRTEType = isRTEResourceType(resourceType)
-      const isRTEName = isRTENodeName(nodeName)
-
-      if (hasText) {
-        const entry = { path, text: node.text || '', resourceType, nodeName }
-        allNodesWithText.push(entry)
-        if (isRTEType) rteNodes.push(entry)
-      }
-
-      // Track ALL RTE-like nodes, even those without text property (empty RTEs)
-      if (isRTEType || isRTEName) {
-        allRteNodes.push({
+      if ((node['sling:resourceType'] || '') === RTE_TYPE) {
+        rteNodes.push({
           path,
-          text: hasText ? (node.text || '') : '',
-          resourceType,
-          nodeName,
-          hasTextProp: hasText
+          text: typeof node.text === 'string' ? node.text : '',
+          nodeName: path.substring(path.lastIndexOf('/') + 1)
         })
       }
-
-      // Recurse into child nodes
-      for (const [key, val] of Object.entries(node)) {
-        if (key.startsWith('jcr:') || key.startsWith('sling:') || key.startsWith('cq:') || key.startsWith(':')) continue
-        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-          walkTree(val, path + '/' + key, key)
-        }
+      for (const [k, v] of Object.entries(node)) {
+        if (k.startsWith('jcr:') || k.startsWith('sling:') || k.startsWith('cq:') || k.startsWith(':')) continue
+        if (typeof v === 'object' && v !== null && !Array.isArray(v)) walk(v, path + '/' + k)
       }
     }
+    walk(pageTree, jcrContent)
 
-    walkTree(pageTree, jcrContent, 'jcr:content')
+    console.log('[KeyFindings] RTEs encontrados:', rteNodes.length)
+    console.table(rteNodes.map(n => ({
+      nodeName: n.nodeName,
+      preview: n.text.replace(/<[^>]+>/g, '').substring(0, 60),
+      path: n.path
+    })))
 
-    // ── Diagnostics ──
-    log(`\n📋 All nodes with "text" property: ${allNodesWithText.length}`)
-    allNodesWithText.forEach((n, i) => {
-      const preview = n.text ? n.text.replace(/<[^>]+>/g, '').substring(0, 40) : '(empty)'
-      const isRTE = rteNodes.includes(n) ? ' ✓ RTE' : ' ✗ skip'
-      log(`   [${i}]${isRTE} | ${n.resourceType || '(no type)'} | "${preview}"`)
-    })
-
-    log(`\n📝 All RTE-like nodes (incl. empty): ${allRteNodes.length}`)
-    allRteNodes.forEach((n, i) => {
-      const preview = n.text ? n.text.replace(/<[^>]+>/g, '').substring(0, 40) : '(empty)'
-      const textFlag = n.hasTextProp ? '📄' : '📭'
-      log(`   RTE[${i}] ${textFlag} ${n.nodeName} | ${n.resourceType || '(no type)'} | "${preview}"`)
-      log(`      path: ${n.path}`)
-    })
-
-    if (allRteNodes.length === 0) {
-      logErr('\n❌ No RTE components found on this page.')
-      logErr('   Try pasting the HTML manually using the "Copy HTML" button.')
+    if (rteNodes.length === 0) {
+      logErr('No se encontraron componentes de texto enriquecido en esta página.')
       return { success: false, logs, error: 'No RTE components found' }
     }
 
-    // ── Strategy: find "Key findings" in allRteNodes, then target the NEXT RTE ──
-    let keyFindingsIdx = -1
-    for (let i = 0; i < allRteNodes.length; i++) {
-      const plainText = allRteNodes[i].text.replace(/<[^>]+>/g, '').toLowerCase().trim()
-      if (plainText.includes('key finding')) {
-        keyFindingsIdx = i
-        log(`\n✅ Found "Key findings" heading at RTE[${i}]`)
-        break
-      }
+    // ── Locate the "Key findings" heading and its sibling target ──
+    // The target is the next RTE within the SAME parent container as
+    // the heading. If we can't find that, fall back to the first empty
+    // RTE on the page.
+    let kfIdx = -1
+    for (let i = 0; i < rteNodes.length; i++) {
+      const plain = rteNodes[i].text.replace(/<[^>]+>/g, '').toLowerCase().trim()
+      if (plain.includes('key finding')) { kfIdx = i; break }
     }
 
     let targetNode = null
-
-    if (keyFindingsIdx !== -1 && keyFindingsIdx + 1 < allRteNodes.length) {
-      // Check if the next RTE node is a sibling (same parent container)
-      const kfPath = allRteNodes[keyFindingsIdx].path
-      const kfParent = kfPath.substring(0, kfPath.lastIndexOf('/'))
-      const nextNode = allRteNodes[keyFindingsIdx + 1]
-      const nextParent = nextNode.path.substring(0, nextNode.path.lastIndexOf('/'))
-
-      if (kfParent === nextParent) {
-        targetNode = nextNode
-        log(`📝 Target: sibling RTE[${keyFindingsIdx + 1}] "${nextNode.nodeName}" (same container)`)
-      } else {
-        targetNode = nextNode
-        log(`📝 Target: RTE[${keyFindingsIdx + 1}] "${nextNode.nodeName}" (different container)`)
-      }
-    } else if (keyFindingsIdx === -1) {
-      logWarn('   "Key findings" heading not found — looking for first empty RTE')
-      targetNode = allRteNodes.find(n => {
-        const t = n.text.replace(/<[^>]+>/g, '').trim()
-        return !t
-      })
-      if (targetNode) log(`📝 Target: first empty RTE "${targetNode.nodeName}"`)
-    } else {
-      logWarn('   "Key findings" is the last RTE — no next component found')
+    if (kfIdx !== -1 && kfIdx + 1 < rteNodes.length) {
+      const kfParent = rteNodes[kfIdx].path.substring(0, rteNodes[kfIdx].path.lastIndexOf('/'))
+      const next = rteNodes[kfIdx + 1]
+      const nextParent = next.path.substring(0, next.path.lastIndexOf('/'))
+      if (kfParent === nextParent) targetNode = next
     }
-
     if (!targetNode) {
-      logErr('\n❌ Could not find a target RTE component to insert into.')
+      targetNode = rteNodes.find(n => !n.text.replace(/<[^>]+>/g, '').trim())
+      if (targetNode) {
+        logWarn('No se encontró el encabezado "Key findings" — se usará el primer RTE vacío.')
+      }
+    }
+    if (!targetNode) {
+      logErr('No se pudo encontrar un componente destino para insertar los bullets.')
       return { success: false, logs, error: 'No target RTE found' }
     }
 
-    const existingContent = targetNode.text.replace(/<[^>]+>/g, '').trim()
-    if (existingContent.length > 0) {
-      logWarn(`   ⚠️ Target RTE has content: "${existingContent.substring(0, 50)}..."`)
-      logWarn(`   Overwriting with key findings.`)
+    log('Componente destino encontrado.')
+    console.log('[KeyFindings] target path:', targetNode.path)
+
+    const existing = targetNode.text.replace(/<[^>]+>/g, '').trim()
+    if (existing.length > 0) {
+      logWarn('El componente destino ya tenía contenido — se sobrescribirá.')
+      console.warn('[KeyFindings] overwriting existing content:', existing.substring(0, 200))
     }
 
-    // ── Write the HTML via Sling POST ──
-    log(`\n📤 Writing to: ${targetNode.path}`)
+    // ── Build the Sling POST payload ──
+    // The webmasters-aem RTE has 4 properties that matter:
+    //   text         — source HTML (dialog)
+    //   derivedDom   — rendered HTML (editor view); equals `text` for bullets
+    //   textAsJson   — JSON AST (preview / published renderer)
+    //   textIsRich   — string "true"
+    // The textAsJson AST shape is built in sidepanel.js
+    // buildKeyFindingsPayload() to match what AEM's dialog Done emits.
+    log('Insertando contenido…')
 
-    // Use the same parameter format that AEM's dialog uses:
-    // ./text, ./textIsRich with _charset_=utf-8
     const writeParams = new URLSearchParams()
     writeParams.set('_charset_', 'utf-8')
+    writeParams.set(':status', 'browser')
     writeParams.set('./text', html)
+    writeParams.set('./text@TypeHint', 'String')
+    writeParams.set('./derivedDom', html)
+    writeParams.set('./derivedDom@TypeHint', 'String')
+    writeParams.set('./textAsJson', textAsJson || '')
+    writeParams.set('./textAsJson@TypeHint', 'String')
     writeParams.set('./textIsRich', 'true')
+    writeParams.set('./jcr:lastModified', '')
+    writeParams.set('./jcr:lastModified@TypeHint', 'Date')
+    writeParams.set('./jcr:lastModifiedBy', '')
+
+    console.log('[KeyFindings] POST', targetNode.path)
+    console.log('[KeyFindings] payload fields:', [...writeParams.keys()].filter(k => k.startsWith('./')))
 
     const res = await fetch(targetNode.path, {
       method: 'POST',
@@ -625,19 +680,121 @@ async function insertKeyFindingsInAEM(slug, html) {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
-      logErr(`   ❌ Write failed: HTTP ${res.status} ${errText.substring(0, 200)}`)
+      console.error('[KeyFindings] write failed', res.status, errText)
+      logErr('No se pudo escribir el contenido (HTTP ' + res.status + ').')
       return { success: false, logs, error: 'Write failed: HTTP ' + res.status }
     }
 
-    log('   ✅ Content written to JCR')
+    // Verify the write — only failures surface to the side panel; the
+    // full property shapes go to the DevTools console.
+    try {
+      const verify = await fetch(targetNode.path + '.json', {
+        headers: { 'CSRF-Token': token }
+      }).then(r => r.json())
+      console.log('[KeyFindings] verify text       ', verify.text)
+      console.log('[KeyFindings] verify derivedDom ', verify.derivedDom)
+      console.log('[KeyFindings] verify textAsJson ', verify.textAsJson)
+      console.log('[KeyFindings] verify textIsRich ', verify.textIsRich)
+      const ok = typeof verify.derivedDom === 'string' && verify.derivedDom.includes('<li') &&
+                 typeof verify.textAsJson === 'string' && verify.textAsJson.includes('"LI"')
+      if (!ok) {
+        logWarn('La escritura se realizó pero la verificación no encontró la lista esperada.')
+      }
+    } catch (e) {
+      console.warn('[KeyFindings] verify failed', e)
+    }
 
-    // Return the target path so the message handler can refresh the
-    // specific editable from MAIN world
-    log('\n✅ Key findings inserted — refreshing editor...')
+    log('Contenido insertado. Refrescando editor…')
     return { success: true, logs, targetPath: targetNode.path }
 
   } catch (err) {
-    logErr('💥 Fatal error: ' + err.message)
+    console.error('[KeyFindings] fatal', err)
+    logErr('Error: ' + err.message)
     return { success: false, logs, error: err.message }
+  } finally {
+    console.groupEnd()
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VALIDATION HELPERS — quick existence checks against the active AEM tab.
+// Used by the side panel after step 1 to decide whether to skip step 2
+// (assets already in DAM) and/or step 3 (page already exists).
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function checkDamAssetsInAEM(slug) {
+  try {
+    const damBase = '/content/dam/web/msci-com/research-and-insights/blog-post'
+    const folderPath = `${damBase}/${slug}`
+
+    // Read the folder + 1 level of children. 404 → folder doesn't exist.
+    const res = await fetch(`${folderPath}.1.json`, { headers: { 'Accept': 'application/json' } })
+    if (res.status === 404) {
+      return { success: true, exists: false, folderPath }
+    }
+    if (!res.ok) {
+      return { success: false, error: 'HTTP ' + res.status, folderPath }
+    }
+    const data = await res.json()
+
+    function countAssets(node) {
+      if (!node || typeof node !== 'object') return 0
+      return Object.keys(node).filter(k => !k.startsWith('jcr:') && !k.startsWith(':')).length
+    }
+
+    const hasExhibitsFolder = !!data.exhibits
+    const hasBannersFolder = !!data.banners
+
+    let exhibitsCount = 0
+    let bannersCount = 0
+
+    if (hasExhibitsFolder) {
+      try {
+        const er = await fetch(`${folderPath}/exhibits.1.json`)
+        if (er.ok) exhibitsCount = countAssets(await er.json())
+      } catch (e) {}
+    }
+    if (hasBannersFolder) {
+      try {
+        const br = await fetch(`${folderPath}/banners.1.json`)
+        if (br.ok) bannersCount = countAssets(await br.json())
+      } catch (e) {}
+    }
+
+    return {
+      success: true,
+      exists: hasExhibitsFolder && hasBannersFolder && (exhibitsCount + bannersCount) > 0,
+      hasExhibitsFolder,
+      hasBannersFolder,
+      exhibitsCount,
+      bannersCount,
+      folderPath
+    }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+async function checkPageExistsInAEM(slug) {
+  try {
+    const parentPath = '/content/msci/us/en/research-and-insights/blog-post'
+    const pagePath = `${parentPath}/${slug}`
+    const res = await fetch(`${pagePath}/jcr:content.json`, { headers: { 'Accept': 'application/json' } })
+    if (res.status === 404) {
+      return { success: true, exists: false, pagePath }
+    }
+    if (!res.ok) {
+      return { success: false, error: 'HTTP ' + res.status, pagePath }
+    }
+    const data = await res.json()
+    return {
+      success: true,
+      exists: true,
+      title: data['jcr:title'] || '',
+      template: data['cq:template'] || '',
+      pagePath
+    }
+  } catch (err) {
+    return { success: false, error: err.message }
   }
 }

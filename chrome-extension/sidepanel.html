@@ -18,7 +18,7 @@
 
   <!-- Step Indicator -->
   <div id="steps-bar">
-    <div class="step active" data-step="1">
+    <div class="step active clickable" data-step="1">
       <div class="step-number">1</div>
       <div class="step-label">Select</div>
     </div>
@@ -36,6 +36,14 @@
     <div class="step" data-step="4">
       <div class="step-number">4</div>
       <div class="step-label">Content</div>
+    </div>
+  </div>
+
+  <!-- Validation overlay (shown after article select while we check AEM) -->
+  <div id="validation-overlay" class="hidden">
+    <div class="validation-overlay-card">
+      <div class="validation-spinner"></div>
+      <div id="validation-overlay-text">Validando estado en AEM…</div>
     </div>
   </div>
 
@@ -68,6 +76,8 @@
       <h2 id="step2-title"></h2>
       <span id="step2-status" class="badge"></span>
     </div>
+
+    <div id="step2-validation" class="validation-card hidden"></div>
 
     <div class="info-card">
       <h3>Assets Summary</h3>
@@ -120,6 +130,8 @@
     <div class="selected-article-header">
       <h2 id="step3-title"></h2>
     </div>
+
+    <div id="step3-validation" class="validation-card hidden"></div>
 
     <div class="info-card">
       <h3>Page Properties</h3>

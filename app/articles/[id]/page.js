@@ -171,6 +171,14 @@ function resolveExhibit(block, exhibitPaths) {
   if (!exhibitPaths) return null
   const idx = block.sharepoint_index ?? block.exhibit_index
   if (idx == null) return null
+
+  // New format: items[] is authoritative (sorted by filename order suffix).
+  if (Array.isArray(exhibitPaths.items)) {
+    const item = exhibitPaths.items[idx]
+    return item ? { ...item, exhibit_type: item.type } : null
+  }
+
+  // Legacy format fallback.
   const { statics = [], interactives = [], summary = [] } = exhibitPaths
   const summaryItem = summary[idx]
   if (!summaryItem) return null
@@ -201,7 +209,10 @@ export default function ArticlePage() {
   const [scriptLabel, setScriptLabel] = useState('AEM Publish Script')
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState('')
-  const [exhibitOverrides, setExhibitOverrides] = useState({})
+  const [rescanning, setRescanning] = useState(false)
+  const [rescanError, setRescanError] = useState('')
+  const [rescanMsg, setRescanMsg] = useState('')
+  const [savingBlocks, setSavingBlocks] = useState(false)
   const [previewCopied, setPreviewCopied] = useState(false)
   const { copied, copy, copyRich } = useCopy()
   const [activeTab, setActiveTab] = useState('metadata')
@@ -282,6 +293,25 @@ export default function ArticlePage() {
 
   useEffect(() => { if (user && id) fetchArticle() }, [user, id])
 
+  // Persiste un cambio en body_blocks → Supabase + estado local (preview se actualiza)
+  const updateBodyBlocks = async (mutator) => {
+    const next = mutator(article.body_blocks || [])
+    setArticle(prev => ({ ...prev, body_blocks: next }))
+    setSavingBlocks(true)
+    try {
+      await supabase.from('articles').update({ body_blocks: next }).eq('id', id)
+    } finally {
+      setSavingBlocks(false)
+    }
+  }
+
+  const reassignExhibit = (blockIdx, newSharepointIdx) => {
+    return updateBodyBlocks(blocks => blocks.map((b, i) => {
+      if (i !== blockIdx || b.type !== 'exhibit') return b
+      return { ...b, sharepoint_index: newSharepointIdx }
+    }))
+  }
+
   const refreshAssets = async () => {
     setRefreshing(true)
     setRefreshError('')
@@ -295,6 +325,32 @@ export default function ArticlePage() {
       setArticle(prev => ({ ...prev, exhibit_paths: data.exhibit_paths, banner_paths: data.banner_paths, body_blocks: data.body_blocks }))
     } catch (err) { setRefreshError(err.message) }
     setRefreshing(false)
+  }
+
+  // Re-escanea la carpeta de SharePoint: detecta archivos nuevos/modificados,
+  // reconstruye exhibit_paths (items[] + legacy shapes) y actualiza
+  // body_blocks + export_json con los datos frescos.
+  const rescanExhibits = async () => {
+    setRescanning(true)
+    setRescanError('')
+    setRescanMsg('')
+    try {
+      const res = await fetch('/api/sharepoint/rescan-exhibits', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ articleId: id })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error al re-escanear')
+      setArticle(prev => ({
+        ...prev,
+        exhibit_paths: data.exhibit_paths,
+        banner_paths: data.banner_paths,
+        body_blocks: data.body_blocks
+      }))
+      setRescanMsg(`✓ ${data.summary.total} exhibit(s) (${data.summary.statics} static, ${data.summary.interactives} interactive)`)
+      setTimeout(() => setRescanMsg(''), 4000)
+    } catch (err) { setRescanError(err.message) }
+    setRescanning(false)
   }
 
   const publishAssetsToDAM = () => {
@@ -706,12 +762,15 @@ export default function ArticlePage() {
 
   const wordTags = article.tags?.all_tags || []
   const exhibitPaths = article.exhibit_paths || null
-  const exhibitOptions = exhibitPaths?.summary?.map((e, i) => ({
-    value: i,
-    label: e.type === 'static'
-      ? `[Static] ${e.base_name} (${e.desktop_filename})`
-      : `[Interactive] ${e.base_name} (${e.json_filename})`
-  })) || []
+  const exhibitOptions = (exhibitPaths?.items || exhibitPaths?.summary || []).map((e, i) => {
+    const order = e.order != null ? `#${e.order} ` : ''
+    if (e.type === 'static') {
+      const filename = e.desktop_filename || e.desktop?.filename || ''
+      return { value: i, label: `${order}[Static] ${e.base_name} (${filename})` }
+    }
+    const filename = e.json_filename || e.json?.filename || ''
+    return { value: i, label: `${order}[Interactive] ${e.base_name} (${filename})` }
+  })
 
   const exportData = {
     meta: { exported_at: new Date().toISOString(), platform_version: '1.0', article_id: id },
@@ -925,8 +984,7 @@ export default function ArticlePage() {
                 )
 
                 if (block.type === 'exhibit') {
-                  const overrideIdx = exhibitOverrides[blockIdx]
-                  const resolvedIdx = overrideIdx ?? block.sharepoint_index ?? block.exhibit_index
+                  const resolvedIdx = block.sharepoint_index ?? block.exhibit_index
                   const exhibit = resolveExhibit({ ...block, sharepoint_index: resolvedIdx }, exhibitPaths)
                   return (
                     <div key={blockIdx} style={{ backgroundColor: 'white', border: '1px solid #e5e5e5', borderRadius: '8px', overflow: 'hidden' }}>
@@ -980,8 +1038,9 @@ export default function ArticlePage() {
                           {exhibitOptions.length > 0 && (
                             <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid #e5e5e5' }}>
                               <label style={{ fontSize: '0.72rem', color: '#999', display: 'block', marginBottom: '0.3rem', fontWeight: '600', textTransform: 'uppercase' }}>Override assignment</label>
-                              <select value={overrideIdx ?? resolvedIdx ?? ''}
-                                onChange={e => setExhibitOverrides(prev => ({ ...prev, [blockIdx]: parseInt(e.target.value) }))}
+                              <select value={resolvedIdx ?? ''}
+                                onChange={e => reassignExhibit(blockIdx, parseInt(e.target.value))}
+                                disabled={savingBlocks}
                                 style={{ width: '100%', padding: '0.35rem 0.5rem', border: '1px solid #ddd', borderRadius: '4px', fontSize: '0.8rem', backgroundColor: 'white' }}>
                                 {exhibitOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                               </select>
@@ -1135,6 +1194,22 @@ export default function ArticlePage() {
             {refreshing ? 'Refreshing...' : 'Refresh assets'}
           </button>
           {refreshError && <p style={{ fontSize: '11px', color: '#cc0000', margin: '2px 0 0' }}>{refreshError}</p>}
+
+          <button onClick={rescanExhibits} disabled={rescanning || !article.sharepoint_folder_url} style={{
+            ...s.actionBtn,
+            color: rescanning ? '#999' : '#0369a1',
+            borderColor: '#bae6fd',
+            backgroundColor: rescanning ? '#f8fafc' : '#f0f9ff',
+            cursor: (rescanning || !article.sharepoint_folder_url) ? 'not-allowed' : 'pointer',
+            opacity: !article.sharepoint_folder_url ? 0.5 : 1
+          }} title={!article.sharepoint_folder_url ? 'No SharePoint folder URL on this article' : 'Re-read the SharePoint folder and update exhibits'}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <path d="M2 8h3l2-5 2 10 2-5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            {rescanning ? 'Re-scanning...' : 'Re-scan exhibits'}
+          </button>
+          {rescanError && <p style={{ fontSize: '11px', color: '#cc0000', margin: '2px 0 0' }}>{rescanError}</p>}
+          {rescanMsg && <p style={{ fontSize: '11px', color: '#16a34a', margin: '2px 0 0' }}>{rescanMsg}</p>}
 
           <div style={s.sideDivider} />
           <div style={s.sideLabel}>Settings</div>

@@ -170,11 +170,11 @@ export async function POST(req) {
     const endSection = extractEndSection(docText)
 
     const exhibitsContext = exhibitsSummary?.summary?.length
-      ? `\nEXHIBITS AVAILABLE IN SHAREPOINT (in order):
+      ? `\nEXHIBITS AVAILABLE IN SHAREPOINT (ordered by filename suffix — position in list = order in blog post):
 ${exhibitsSummary.summary.map((e, i) =>
   e.type === 'static'
-    ? `${i + 1}. [STATIC] base_name: "${e.base_name}" | desktop: "${e.desktop_filename}"`
-    : `${i + 1}. [INTERACTIVE] base_name: "${e.base_name}" | json: "${e.json_filename}"`
+    ? `Index ${i}: [STATIC] base_name: "${e.base_name}" | desktop: "${e.desktop_filename}"`
+    : `Index ${i}: [INTERACTIVE] base_name: "${e.base_name}" | json: "${e.json_filename}"`
 ).join('\n')}`
       : '\nNo exhibits found in SharePoint for this project.'
 
@@ -225,16 +225,17 @@ Extract these fields:
   * STOP the text block when you hit an image reference (![](media/imageN.png))
   * Do NOT include exhibit titles or captions in text blocks
 
-  EXHIBIT BLOCKS: { "type": "exhibit", "title": "...", "caption": "...", "sharepoint_index": N, "match_confidence": "high"|"low" }
+  EXHIBIT BLOCKS: { "type": "exhibit", "title": "...", "caption": "...", "sharepoint_index": N, "match_confidence": "high" }
   * Whenever you encounter an image reference (![](media/imageN.png)), create an exhibit block
   * "title": the BOLD text immediately BEFORE the image — this is the exhibit title
   * "caption": the text in a different/smaller style immediately AFTER the image (usually a data source note). null if none exists.
-  * "sharepoint_index": match this exhibit to the SharePoint exhibit list below using the title keywords.
-    - Compare the exhibit title keywords against the base_name of each SharePoint file
-    - For INTERACTIVE exhibits: if the exhibit appears to be a chart/visualization that is NOT a static image (e.g. it looks like an interactive chart with many data points), prefer the [INTERACTIVE] type
-    - Assign the SharePoint index (0-based from the list below) that best matches
-    - If you cannot match with confidence, use the next available index in order
-  * "match_confidence": "high" if the title keywords clearly match the filename, "low" if uncertain
+  * "sharepoint_index": ASSIGN SEQUENTIALLY based on the ORDER the image appears in the document.
+    - The FIRST image/exhibit in the document → sharepoint_index 0
+    - The SECOND image/exhibit → sharepoint_index 1
+    - The THIRD → sharepoint_index 2, and so on
+    - This works because the SharePoint file list below is already sorted by the numeric order suffix in each filename (which matches appearance order in the blog post).
+    - Do NOT try to match by title keywords. Just use the zero-based position of the image in the document.
+  * "match_confidence": always "high"
 ${exhibitsContext}
 
 - footnotes: array of {number: int, text: string} from end of document. Preserve <em> and links.
@@ -304,22 +305,18 @@ Return ONLY: {"all_tags": ["Tag 1", "Tag 2", ...]}`
     }
 
     // ── Enriquecer body_blocks con datos reales de SharePoint ─────────────────
-    if (parsed.body_blocks && exhibitsSummary) {
+    // sharepoint_index es ahora la posición 0-based directa en items[].
+    if (parsed.body_blocks && exhibitsSummary?.items) {
       parsed.body_blocks = parsed.body_blocks.map(block => {
         if (block.type !== 'exhibit') return block
         const idx = block.sharepoint_index
-        const summaryItem = exhibitsSummary.summary?.[idx]
-        if (!summaryItem) return { ...block, sharepoint_data: null }
-        if (summaryItem.type === 'static') {
-          const staticData = exhibitsSummary.statics?.[idx]
-          return { ...block, sharepoint_data: staticData || null, exhibit_type: 'static' }
+        const item = exhibitsSummary.items[idx]
+        if (!item) return { ...block, sharepoint_data: null }
+        return {
+          ...block,
+          sharepoint_data: item,
+          exhibit_type: item.type
         }
-        if (summaryItem.type === 'interactive') {
-          const interactiveIdx = idx - (exhibitsSummary.statics?.length || 0)
-          const interactiveData = exhibitsSummary.interactives?.[interactiveIdx]
-          return { ...block, sharepoint_data: interactiveData || null, exhibit_type: 'interactive' }
-        }
-        return block
       })
     }
 

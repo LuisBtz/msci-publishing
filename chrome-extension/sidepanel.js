@@ -14,6 +14,17 @@ let selectedArticle = null
 let currentStep = 1
 let currentFilter = 'all'
 
+// Steps the user can freely jump back to.
+//   • completedSteps — finished (manually or auto-detected via validation)
+//   • visitedSteps   — has been opened in this article session; clickable
+//                      via the step indicator even if not "complete"
+//   • initializedSteps — populateStepX() has run for this article session,
+//                        so subsequent navigation back/forward should not
+//                        wipe the in-DOM state of that step
+const completedSteps = new Set()
+const visitedSteps = new Set([1])
+const initializedSteps = new Set()
+
 // ─── Supabase REST helpers ──────────────────────────────────────────────────
 async function supabaseFetch(endpoint) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
@@ -77,8 +88,78 @@ function renderArticles() {
   list.querySelectorAll('.article-card').forEach(card => {
     card.addEventListener('click', () => {
       const id = card.dataset.id
-      selectedArticle = articles.find(a => a.id === id)
-      if (selectedArticle) goToStep(2)
+      const article = articles.find(a => a.id === id)
+      if (article) selectArticle(article)
+    })
+  })
+}
+
+// ─── Article selection + AEM validation ────────────────────────────────────
+// When the user picks an article we run two parallel checks against AEM:
+//   1. Are the assets already in the DAM?
+//   2. Does the AEM page already exist?
+// Based on the answers we either land on step 2 (fresh), step 3 (skip
+// upload), or step 4 (skip upload + page creation). The validation result
+// is stored on the article object so populateStep2/3 can render the
+// "already done" cards.
+async function selectArticle(article) {
+  selectedArticle = article
+
+  // Reset per-article session state.
+  completedSteps.clear()
+  initializedSteps.clear()
+  visitedSteps.clear()
+  visitedSteps.add(1)
+  delete article._damCheck
+  delete article._pageCheck
+
+  showValidationOverlay('Validando estado en AEM…')
+  try {
+    const [damCheck, pageCheck] = await Promise.all([
+      sendBackground({ type: 'CHECK_DAM_ASSETS', slug: article.slug }),
+      sendBackground({ type: 'CHECK_PAGE_EXISTS', slug: article.slug })
+    ])
+    article._damCheck = damCheck || { success: false }
+    article._pageCheck = pageCheck || { success: false }
+  } catch (e) {
+    article._damCheck = { success: false, error: e.message }
+    article._pageCheck = { success: false, error: e.message }
+  } finally {
+    hideValidationOverlay()
+  }
+
+  // Decide deepest step we can land on. Skip a step only when we've
+  // positively verified the prerequisite is already done.
+  let target = 2
+  if (article._damCheck?.exists) {
+    completedSteps.add(2)
+    target = 3
+  }
+  if (article._damCheck?.exists && article._pageCheck?.exists) {
+    completedSteps.add(3)
+    target = 4
+  }
+
+  goToStep(target)
+}
+
+function showValidationOverlay(text) {
+  const overlay = document.getElementById('validation-overlay')
+  document.getElementById('validation-overlay-text').textContent = text || 'Validando…'
+  overlay.classList.remove('hidden')
+}
+function hideValidationOverlay() {
+  document.getElementById('validation-overlay').classList.add('hidden')
+}
+
+function sendBackground(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve({ success: false, error: chrome.runtime.lastError.message })
+      } else {
+        resolve(response)
+      }
     })
   })
 }
@@ -86,20 +167,63 @@ function renderArticles() {
 // ─── Step Navigation ────────────────────────────────────────────────────────
 function goToStep(step) {
   currentStep = step
+  visitedSteps.add(step)
 
   document.querySelectorAll('#steps-bar .step').forEach(el => {
     const s = parseInt(el.dataset.step)
     el.classList.toggle('active', s === step)
-    el.classList.toggle('completed', s < step)
+    el.classList.toggle('completed', completedSteps.has(s) && s !== step)
+    // Step 1 is always reachable; later steps unlock once visited or completed.
+    const reachable = s === 1 || visitedSteps.has(s) || completedSteps.has(s)
+    el.classList.toggle('clickable', reachable)
   })
 
   document.querySelectorAll('.step-content').forEach(el => {
     el.classList.toggle('active', el.id === `step-${step}`)
   })
 
-  if (step === 2) populateStep2()
-  if (step === 3) populateStep3()
-  if (step === 4) populateStep4()
+  // Only run populateStepX on FIRST visit to a step in this article session
+  // — back/forward navigation should preserve in-DOM state (logs, button
+  // states, etc.) so the user can review what happened.
+  if (!initializedSteps.has(step)) {
+    initializedSteps.add(step)
+    if (step === 2) populateStep2()
+    if (step === 3) populateStep3()
+    if (step === 4) populateStep4()
+  }
+}
+
+// Recompute step-indicator classes without changing the active step. Called
+// after completedSteps is mutated by a successful publish/create so the
+// green-check state of the indicator updates immediately.
+function refreshStepBar() {
+  document.querySelectorAll('#steps-bar .step').forEach(el => {
+    const s = parseInt(el.dataset.step)
+    el.classList.toggle('active', s === currentStep)
+    el.classList.toggle('completed', completedSteps.has(s) && s !== currentStep)
+    const reachable = s === 1 || visitedSteps.has(s) || completedSteps.has(s)
+    el.classList.toggle('clickable', reachable)
+  })
+}
+
+// Click handler for the step indicators in the top bar. The user can jump
+// freely between steps that are visited or completed; step 1 is always
+// reachable.
+function handleStepIndicatorClick(stepEl) {
+  const s = parseInt(stepEl.dataset.step)
+  if (!stepEl.classList.contains('clickable')) return
+  if (s === currentStep) return
+  if (s === 1) {
+    // Going back to article selection — clear per-article state.
+    selectedArticle = null
+    completedSteps.clear()
+    initializedSteps.clear()
+    visitedSteps.clear()
+    visitedSteps.add(1)
+    goToStep(1)
+    return
+  }
+  goToStep(s)
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -142,6 +266,48 @@ function populateStep2() {
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.65 2.35A7.96 7.96 0 008 0C3.58 0 .01 3.58.01 8S3.58 16 8 16c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 018 14 6 6 0 012 8a6 6 0 016-6c1.66 0 3.14.69 4.22 1.78L9 7h7V0l-2.35 2.35z" fill="currentColor"/></svg>
     Refresh URLs
   `
+
+  // Render the validation card if we already detected the assets in DAM.
+  renderStep2Validation(a)
+}
+
+// Render the "already in DAM" validation card. Called from populateStep2.
+// When the assets exist we hide the publish button and surface the
+// "Continue" button so the user can move on without re-uploading.
+function renderStep2Validation(article) {
+  const card = document.getElementById('step2-validation')
+  const damCheck = article._damCheck
+  const publishBtn = document.getElementById('btn-publish-assets')
+  const continueBtn = document.getElementById('btn-goto-step3')
+
+  if (damCheck?.exists) {
+    card.classList.remove('hidden')
+    card.innerHTML = `
+      <div class="validation-card-icon">✓</div>
+      <div class="validation-card-body">
+        <h3>Assets ya existen en el DAM</h3>
+        <p>La carpeta <code>${escHtml(damCheck.folderPath || '')}</code> ya contiene
+        <strong>${damCheck.exhibitsCount || 0}</strong> exhibit(s) y
+        <strong>${damCheck.bannersCount || 0}</strong> banner(s).
+        Puedes saltarte este paso.</p>
+        <button id="btn-republish-assets" class="btn-link-inline">Volver a subir de todas formas</button>
+      </div>
+    `
+    publishBtn.classList.add('hidden')
+    continueBtn.classList.remove('hidden')
+    continueBtn.textContent = 'Continuar al paso 3 →'
+
+    // Allow forcing a re-upload if the user wants to.
+    document.getElementById('btn-republish-assets').addEventListener('click', () => {
+      card.classList.add('hidden')
+      publishBtn.classList.remove('hidden')
+      continueBtn.classList.add('hidden')
+    })
+  } else {
+    card.classList.add('hidden')
+    card.innerHTML = ''
+    publishBtn.classList.remove('hidden')
+  }
 }
 
 function updateFreshnessIndicator(article) {
@@ -313,6 +479,53 @@ function populateStep3() {
   document.getElementById('btn-goto-step4').classList.add('hidden')
   document.getElementById('btn-create-page').disabled = false
   document.getElementById('btn-create-page').classList.remove('running')
+
+  renderStep3Validation(a)
+}
+
+function renderStep3Validation(article) {
+  const card = document.getElementById('step3-validation')
+  const pageCheck = article._pageCheck
+  const createBtn = document.getElementById('btn-create-page')
+  const continueBtn = document.getElementById('btn-goto-step4')
+  const pageLinks = document.getElementById('page-links')
+
+  if (pageCheck?.exists) {
+    const slug = article.slug
+    const parentPath = '/content/msci/us/en/research-and-insights/blog-post'
+    const editUrl = `${AEM_HOST}/editor.html${parentPath}/${slug}.html`
+    const sitesUrl = `${AEM_HOST}/ui#/aem/sites.html${parentPath}`
+
+    card.classList.remove('hidden')
+    card.innerHTML = `
+      <div class="validation-card-icon">✓</div>
+      <div class="validation-card-body">
+        <h3>La página ya existe en AEM</h3>
+        <p>${escHtml(pageCheck.title || article.headline || '')}</p>
+        <p><code>${escHtml(pageCheck.pagePath || '')}</code></p>
+        <button id="btn-recreate-page" class="btn-link-inline">Recrear / actualizar propiedades</button>
+      </div>
+    `
+    createBtn.classList.add('hidden')
+    continueBtn.classList.remove('hidden')
+    continueBtn.textContent = 'Continuar al paso 4 →'
+
+    // Surface the page links so the user can jump straight to the editor.
+    document.getElementById('link-edit-page').href = editUrl
+    document.getElementById('link-sites-view').href = sitesUrl
+    pageLinks.classList.remove('hidden')
+
+    document.getElementById('btn-recreate-page').addEventListener('click', () => {
+      card.classList.add('hidden')
+      createBtn.classList.remove('hidden')
+      continueBtn.classList.add('hidden')
+      pageLinks.classList.add('hidden')
+    })
+  } else {
+    card.classList.add('hidden')
+    card.innerHTML = ''
+    createBtn.classList.remove('hidden')
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -347,11 +560,69 @@ function populateStep4() {
   btnCopy.textContent = 'Copy HTML'
 }
 
-function buildKeyFindingsHtml(bullets) {
-  const lis = bullets.map(b =>
-    `<li style="margin-bottom:16px"><span style="font-family:Mercury Text G1,Georgia,serif;font-size:18px;line-height:1.6;color:#333333">${b}</span></li>`
+// Build the payload for a webmasters-aem richtexteditor "key findings"
+// bullet list. We have to produce BOTH:
+//
+//   1. `html`       — goes into `text` and `derivedDom`. Editor reads this.
+//   2. `textAsJson` — goes into `textAsJson`. Preview/published renderer
+//                     reads this. If it's missing or stale the preview
+//                     shows the heading but no bullets.
+//
+// Both shapes MUST match what AEM's dialog would produce on a manual
+// Done, otherwise (a) the preview won't render bullets, and (b) pressing
+// Done later will visibly re-shape them. Reference shapes were captured
+// from a real sibling blog-post RTE — see memory/project_insert_key_findings_wip.md.
+//
+// Notable quirks copied verbatim from the reference:
+//   - the SPAN uses single-quoted class attributes
+//   - the closing tags come out as `</li></span>` (yes, crossed — AEM
+//     literally stores it this way and its own renderer expects it)
+//   - the `<ul>` carries no inline styles, no class
+function buildKeyFindingsPayload(bullets) {
+  // Decode any HTML entities in the bullet so we have plain text to put
+  // into the JSON AST. The text going into `html` is also plain (no tags)
+  // so the sidepanel-side DOM decoder is fine.
+  const plain = (bullets || []).map(b => {
+    const tmp = document.createElement('div')
+    tmp.innerHTML = String(b || '')
+    return (tmp.textContent || '').trim()
+  }).filter(Boolean)
+
+  const SPAN_CLASS = 'ms-body-l-sm lg:ms-body-l-lg ms-font-regular'
+
+  const lis = plain.map(t =>
+    `<li><span class='${SPAN_CLASS}'>${t}</li></span>`
   ).join('')
-  return `<ul style="list-style-type:disc;padding-left:24px;margin:16px 0">${lis}</ul>`
+  const html = `<ul>${lis}</ul>`
+
+  const textAsJson = JSON.stringify({
+    root: {
+      children: [{
+        tag: 'UL',
+        className: '',
+        tailwindStyles: '',
+        typography: '',
+        color: '',
+        children: plain.map(t => ({
+          tag: 'LI',
+          className: '',
+          tailwindStyles: '',
+          typography: '',
+          color: '',
+          children: [{
+            tag: 'SPAN',
+            className: SPAN_CLASS,
+            tailwindStyles: '',
+            typography: '',
+            color: '',
+            children: [{ tag: 'text', textContent: t }]
+          }]
+        }))
+      }]
+    }
+  })
+
+  return { html, textAsJson }
 }
 
 // ─── Run a structured request in the active AEM tab ────────────────────────
@@ -430,9 +701,14 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 
   // Back buttons
-  document.getElementById('btn-back-2').addEventListener('click', () => goToStep(1))
+  document.getElementById('btn-back-2').addEventListener('click', () => handleStepIndicatorClick(document.querySelector('#steps-bar .step[data-step="1"]')))
   document.getElementById('btn-back-3').addEventListener('click', () => goToStep(2))
   document.getElementById('btn-back-4').addEventListener('click', () => goToStep(3))
+
+  // Step indicator clicks — jump freely between visited/completed steps.
+  document.querySelectorAll('#steps-bar .step').forEach(el => {
+    el.addEventListener('click', () => handleStepIndicatorClick(el))
+  })
 
   // Step 2: Refresh SharePoint URLs
   document.getElementById('btn-refresh-assets').addEventListener('click', refreshAssets)
@@ -457,6 +733,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (success) {
       btn.textContent = '✓ Assets Published'
       document.getElementById('btn-goto-step3').classList.remove('hidden')
+      completedSteps.add(2)
+      refreshStepBar()
     } else {
       btn.disabled = false
       btn.textContent = 'Retry Publish Assets'
@@ -485,6 +763,8 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('link-sites-view').href = `${AEM_HOST}/ui#/aem/sites.html${parentPath}`
       document.getElementById('page-links').classList.remove('hidden')
       document.getElementById('btn-goto-step4').classList.remove('hidden')
+      completedSteps.add(3)
+      refreshStepBar()
     } else {
       btn.disabled = false
       btn.textContent = 'Retry Create Page'
@@ -500,24 +780,23 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.disabled = true
     btn.textContent = 'Inserting...'
 
-    const html = buildKeyFindingsHtml(selectedArticle.bullets || [])
+    const { html, textAsJson } = buildKeyFindingsPayload(selectedArticle.bullets || [])
     const success = await runInAEM({
       type: 'INSERT_KEY_FINDINGS',
       slug: selectedArticle.slug,
-      html
+      html,
+      textAsJson
     }, 'kf-log')
 
-    if (success) {
-      btn.textContent = '✓ Inserted'
-    } else {
-      btn.disabled = false
-      btn.textContent = 'Retry Insert'
-    }
+    // Always re-enable so the user can run insert again (e.g. after a
+    // manual dialog Done, to capture the post-Done snapshot in the log).
+    btn.disabled = false
+    btn.textContent = success ? '✓ Inserted — run again' : 'Retry Insert'
   })
 
   // Step 4: Copy Key Findings HTML
   document.getElementById('btn-copy-kf').addEventListener('click', () => {
-    const html = buildKeyFindingsHtml(selectedArticle.bullets || [])
+    const { html } = buildKeyFindingsPayload(selectedArticle.bullets || [])
     navigator.clipboard.writeText(html).then(() => {
       const btn = document.getElementById('btn-copy-kf')
       btn.textContent = '✓ Copied'
