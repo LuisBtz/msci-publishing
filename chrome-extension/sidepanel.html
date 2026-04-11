@@ -83,6 +83,19 @@
       </div>
     </div>
 
+    <div id="assets-freshness" class="info-card">
+      <h3>SharePoint URLs</h3>
+      <div id="freshness-indicator" class="freshness-row">
+        <span class="freshness-dot"></span>
+        <span id="freshness-label">Checking...</span>
+      </div>
+      <div id="freshness-detail" class="freshness-detail"></div>
+      <button id="btn-refresh-assets" class="btn-refresh-assets">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.65 2.35A7.96 7.96 0 008 0C3.58 0 .01 3.58.01 8S3.58 16 8 16c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 018 14 6 6 0 012 8a6 6 0 016-6c1.66 0 3.14.69 4.22 1.78L9 7h7V0l-2.35 2.35z" fill="currentColor"/></svg>
+        Refresh URLs
+      </button>
+    </div>
+
     <div class="info-card">
       <h3>DAM Target</h3>
       <code id="dam-path" class="path-display"></code>
@@ -116,7 +129,8 @@
         <div class="prop-item"><label>Publish Date</label><span id="prop-date"></span></div>
         <div class="prop-item"><label>Read Time</label><span id="prop-readtime"></span></div>
         <div class="prop-item"><label>Authors</label><span id="prop-authors"></span></div>
-        <div class="prop-item"><label>Tags</label><span id="prop-tags"></span></div>
+        <div class="prop-item"><label>Tags</label><span id="prop-tags-count"></span></div>
+        <div id="prop-tags-list" class="tags-list"></div>
       </div>
     </div>
 
@@ -138,14 +152,42 @@
     </button>
   </section>
 
-  <!-- Step 4: Content (Coming Soon) -->
+  <!-- Step 4: Content Blocks -->
   <section id="step-4" class="step-content">
     <button class="btn-back" id="btn-back-4">&larr; Back to Page</button>
-    <div class="coming-soon">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#ccc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <h2>Load Content</h2>
-      <p>Automatic content injection into AEM components is coming soon.</p>
-      <p class="hint">For now, use the copy buttons in the Publishing Platform to paste content into AEM components manually.</p>
+    <div class="selected-article-header">
+      <h2 id="step4-title"></h2>
+    </div>
+
+    <div id="content-blocks">
+      <!-- Block 1: Key Findings -->
+      <div class="content-block" id="block-key-findings">
+        <div class="content-block-header">
+          <div class="content-block-number">1</div>
+          <div class="content-block-info">
+            <h3>Key Findings</h3>
+            <span class="content-block-hint">Inserts into the first empty RTE below "Key findings"</span>
+          </div>
+        </div>
+        <div id="kf-preview" class="content-block-preview">
+          <p class="empty-state">No key findings</p>
+        </div>
+        <div class="content-block-actions">
+          <button id="btn-insert-kf" class="btn-primary btn-small" disabled>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 12l7-7 3 3-7 7H2v-3z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.5 3.5l2-2 3 3-2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Insert into AEM
+          </button>
+          <button id="btn-copy-kf" class="btn-outline btn-small" disabled>
+            Copy HTML
+          </button>
+        </div>
+        <div id="kf-log" class="console-log hidden"></div>
+      </div>
+
+      <!-- More content blocks will be added here -->
+      <div class="coming-soon-inline">
+        <p>More content blocks (body text, exhibits, footnotes, related content) coming soon.</p>
+      </div>
     </div>
   </section>
 

@@ -56,6 +56,82 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     })()
     return true
   }
+
+  if (message.type === 'INSERT_KEY_FINDINGS') {
+    ;(async () => {
+      const result = await runInPage(insertKeyFindingsInAEM, [message.slug, message.html])
+
+      // After writing content, use MAIN world to refresh the specific
+      // component editable in the AEM editor (this is what "Done" does)
+      if (result.success && result.targetPath) {
+        const tab = await getActiveAEMTab()
+        if (tab) {
+          try {
+            const [refreshResult] = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              world: 'MAIN',
+              func: (componentPath) => {
+                try {
+                  const ns = window.Granite && window.Granite.author
+                  if (!ns) return { method: 'none', reason: 'No Granite.author' }
+
+                  // Method 1: Find the exact editable and refresh it
+                  if (ns.editables && ns.editables.find) {
+                    const editable = ns.editables.find(componentPath)
+                    if (editable) {
+                      // This is exactly what AEM does after dialog save
+                      if (typeof editable.refresh === 'function') {
+                        editable.refresh()
+                        return { method: 'editable.refresh' }
+                      }
+                    }
+                  }
+
+                  // Method 2: Use the EditableActions to trigger afterEdit
+                  if (ns.edit && ns.edit.actions) {
+                    const editable = ns.editables && ns.editables.find(componentPath)
+                    if (editable && ns.edit.actions.REFRESH) {
+                      ns.edit.actions.doAction(ns.edit.actions.REFRESH, editable)
+                      return { method: 'EditableActions.REFRESH' }
+                    }
+                  }
+
+                  // Method 3: Reload the content frame entirely
+                  if (ns.ContentFrame && ns.ContentFrame.reload) {
+                    ns.ContentFrame.reload()
+                    return { method: 'ContentFrame.reload' }
+                  }
+
+                  // Method 4: Find content iframe and reload
+                  const iframe = document.getElementById('ContentFrame') ||
+                                 document.querySelector('iframe[name="ContentFrame"]')
+                  if (iframe) {
+                    iframe.contentWindow.location.reload()
+                    return { method: 'iframe.reload' }
+                  }
+
+                  return { method: 'none', reason: 'No refresh method available' }
+                } catch (e) { return { method: 'error', reason: e.message } }
+              },
+              args: [result.targetPath]
+            })
+
+            const refreshInfo = refreshResult?.result || { method: 'none' }
+            if (refreshInfo.method && refreshInfo.method !== 'none' && refreshInfo.method !== 'error') {
+              result.logs.push({ type: 'log', message: `   ✅ Editor refreshed via ${refreshInfo.method}` })
+            } else {
+              result.logs.push({ type: 'warn', message: `   ⚠️ Auto-refresh: ${refreshInfo.reason || 'unknown'} — may need manual refresh` })
+            }
+          } catch (e) {
+            result.logs.push({ type: 'warn', message: '   ⚠️ Could not auto-refresh: ' + e.message })
+          }
+        }
+      }
+
+      sendResponse(result)
+    })()
+    return true
+  }
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -355,6 +431,211 @@ async function createPageInAEM(params) {
     log('📂 Sites view: /ui#/aem/sites.html' + parentPath)
     log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
     return { success: true, logs }
+  } catch (err) {
+    logErr('💥 Fatal error: ' + err.message)
+    return { success: false, logs, error: err.message }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INSERT KEY FINDINGS — finds the first empty RTE after the "Key findings"
+// heading RTE in the page's component tree and writes the HTML into it.
+//
+// AEM text/RTE components use sling:resourceType values that typically
+// contain 'text' in the last segment (e.g. core/wcm/components/text,
+// webmasters-aem/components/text, etc). We must exclude non-RTE nodes
+// like contentfragment, image, title, etc. that may also carry a 'text'
+// property.
+// ═══════════════════════════════════════════════════════════════════════════
+async function insertKeyFindingsInAEM(slug, html) {
+  const logs = []
+  const log = (m) => logs.push({ type: 'log', message: m })
+  const logErr = (m) => logs.push({ type: 'error', message: m })
+  const logWarn = (m) => logs.push({ type: 'warn', message: m })
+
+  try {
+    log('🔑 Fetching CSRF token...')
+    const token = (await fetch('/libs/granite/csrf/token.json').then(r => r.json())).token
+    if (!token) throw new Error('Could not get CSRF token')
+
+    const parentPath = '/content/msci/us/en/research-and-insights/blog-post'
+    const pagePath = parentPath + '/' + slug
+    const jcrContent = pagePath + '/jcr:content'
+
+    // Fetch the full page content tree
+    log('\n🔍 Reading page component tree...')
+    const pageTree = await fetch(jcrContent + '.infinity.json', {
+      headers: { 'CSRF-Token': token }
+    }).then(r => r.json())
+
+    if (!pageTree) throw new Error('Could not read page tree')
+
+    // ── Collect ALL nodes that have a 'text' property (for diagnostics) ──
+    const allNodesWithText = []
+    // ── Collect only true RTE/text components (with text) ──
+    const rteNodes = []
+    // ── Collect ALL RTE-like nodes, even empty ones without 'text' prop ──
+    const allRteNodes = []
+
+    // Known RTE resource type endings
+    const RTE_TYPE_KEYWORDS = ['/text', '/rte', '/richtext', '/richtexteditor']
+    // Known NON-RTE types to skip (even if they have a 'text' prop)
+    const SKIP_TYPES = ['contentfragment', 'image', 'title', 'button', 'teaser', 'embed', 'download']
+    // Known RTE node name prefixes (for nodes that may not have text prop yet)
+    const RTE_NODE_PREFIXES = ['text', 'richtexteditor']
+
+    function isRTEResourceType(resourceType) {
+      if (!resourceType) return false
+      const rt = resourceType.toLowerCase()
+      if (SKIP_TYPES.some(skip => rt.includes(skip))) return false
+      return RTE_TYPE_KEYWORDS.some(kw => rt.endsWith(kw) || rt.includes(kw + '/'))
+    }
+
+    function isRTENodeName(nodeName) {
+      if (!nodeName) return false
+      const nn = nodeName.toLowerCase()
+      return RTE_NODE_PREFIXES.some(prefix => nn === prefix || nn.startsWith(prefix + '_'))
+    }
+
+    function walkTree(node, path, nodeName) {
+      if (!node || typeof node !== 'object') return
+
+      const resourceType = node['sling:resourceType'] || ''
+      const hasText = 'text' in node && typeof node.text === 'string'
+      const isRTEType = isRTEResourceType(resourceType)
+      const isRTEName = isRTENodeName(nodeName)
+
+      if (hasText) {
+        const entry = { path, text: node.text || '', resourceType, nodeName }
+        allNodesWithText.push(entry)
+        if (isRTEType) rteNodes.push(entry)
+      }
+
+      // Track ALL RTE-like nodes, even those without text property (empty RTEs)
+      if (isRTEType || isRTEName) {
+        allRteNodes.push({
+          path,
+          text: hasText ? (node.text || '') : '',
+          resourceType,
+          nodeName,
+          hasTextProp: hasText
+        })
+      }
+
+      // Recurse into child nodes
+      for (const [key, val] of Object.entries(node)) {
+        if (key.startsWith('jcr:') || key.startsWith('sling:') || key.startsWith('cq:') || key.startsWith(':')) continue
+        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+          walkTree(val, path + '/' + key, key)
+        }
+      }
+    }
+
+    walkTree(pageTree, jcrContent, 'jcr:content')
+
+    // ── Diagnostics ──
+    log(`\n📋 All nodes with "text" property: ${allNodesWithText.length}`)
+    allNodesWithText.forEach((n, i) => {
+      const preview = n.text ? n.text.replace(/<[^>]+>/g, '').substring(0, 40) : '(empty)'
+      const isRTE = rteNodes.includes(n) ? ' ✓ RTE' : ' ✗ skip'
+      log(`   [${i}]${isRTE} | ${n.resourceType || '(no type)'} | "${preview}"`)
+    })
+
+    log(`\n📝 All RTE-like nodes (incl. empty): ${allRteNodes.length}`)
+    allRteNodes.forEach((n, i) => {
+      const preview = n.text ? n.text.replace(/<[^>]+>/g, '').substring(0, 40) : '(empty)'
+      const textFlag = n.hasTextProp ? '📄' : '📭'
+      log(`   RTE[${i}] ${textFlag} ${n.nodeName} | ${n.resourceType || '(no type)'} | "${preview}"`)
+      log(`      path: ${n.path}`)
+    })
+
+    if (allRteNodes.length === 0) {
+      logErr('\n❌ No RTE components found on this page.')
+      logErr('   Try pasting the HTML manually using the "Copy HTML" button.')
+      return { success: false, logs, error: 'No RTE components found' }
+    }
+
+    // ── Strategy: find "Key findings" in allRteNodes, then target the NEXT RTE ──
+    let keyFindingsIdx = -1
+    for (let i = 0; i < allRteNodes.length; i++) {
+      const plainText = allRteNodes[i].text.replace(/<[^>]+>/g, '').toLowerCase().trim()
+      if (plainText.includes('key finding')) {
+        keyFindingsIdx = i
+        log(`\n✅ Found "Key findings" heading at RTE[${i}]`)
+        break
+      }
+    }
+
+    let targetNode = null
+
+    if (keyFindingsIdx !== -1 && keyFindingsIdx + 1 < allRteNodes.length) {
+      // Check if the next RTE node is a sibling (same parent container)
+      const kfPath = allRteNodes[keyFindingsIdx].path
+      const kfParent = kfPath.substring(0, kfPath.lastIndexOf('/'))
+      const nextNode = allRteNodes[keyFindingsIdx + 1]
+      const nextParent = nextNode.path.substring(0, nextNode.path.lastIndexOf('/'))
+
+      if (kfParent === nextParent) {
+        targetNode = nextNode
+        log(`📝 Target: sibling RTE[${keyFindingsIdx + 1}] "${nextNode.nodeName}" (same container)`)
+      } else {
+        targetNode = nextNode
+        log(`📝 Target: RTE[${keyFindingsIdx + 1}] "${nextNode.nodeName}" (different container)`)
+      }
+    } else if (keyFindingsIdx === -1) {
+      logWarn('   "Key findings" heading not found — looking for first empty RTE')
+      targetNode = allRteNodes.find(n => {
+        const t = n.text.replace(/<[^>]+>/g, '').trim()
+        return !t
+      })
+      if (targetNode) log(`📝 Target: first empty RTE "${targetNode.nodeName}"`)
+    } else {
+      logWarn('   "Key findings" is the last RTE — no next component found')
+    }
+
+    if (!targetNode) {
+      logErr('\n❌ Could not find a target RTE component to insert into.')
+      return { success: false, logs, error: 'No target RTE found' }
+    }
+
+    const existingContent = targetNode.text.replace(/<[^>]+>/g, '').trim()
+    if (existingContent.length > 0) {
+      logWarn(`   ⚠️ Target RTE has content: "${existingContent.substring(0, 50)}..."`)
+      logWarn(`   Overwriting with key findings.`)
+    }
+
+    // ── Write the HTML via Sling POST ──
+    log(`\n📤 Writing to: ${targetNode.path}`)
+
+    // Use the same parameter format that AEM's dialog uses:
+    // ./text, ./textIsRich with _charset_=utf-8
+    const writeParams = new URLSearchParams()
+    writeParams.set('_charset_', 'utf-8')
+    writeParams.set('./text', html)
+    writeParams.set('./textIsRich', 'true')
+
+    const res = await fetch(targetNode.path, {
+      method: 'POST',
+      headers: {
+        'CSRF-Token': token,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+      },
+      body: writeParams.toString()
+    })
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '')
+      logErr(`   ❌ Write failed: HTTP ${res.status} ${errText.substring(0, 200)}`)
+      return { success: false, logs, error: 'Write failed: HTTP ' + res.status }
+    }
+
+    log('   ✅ Content written to JCR')
+
+    // Return the target path so the message handler can refresh the
+    // specific editable from MAIN world
+    log('\n✅ Key findings inserted — refreshing editor...')
+    return { success: true, logs, targetPath: targetNode.path }
+
   } catch (err) {
     logErr('💥 Fatal error: ' + err.message)
     return { success: false, logs, error: err.message }
