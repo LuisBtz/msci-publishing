@@ -196,13 +196,37 @@
         <div id="kf-log" class="console-log hidden"></div>
       </div>
 
-      <!-- More content blocks will be added here -->
-      <div class="coming-soon-inline">
-        <p>More content blocks (body text, exhibits, footnotes, related content) coming soon.</p>
+      <!-- Block 2: Body Content -->
+      <div class="content-block" id="block-body-content">
+        <div class="content-block-header">
+          <div class="content-block-number">2</div>
+          <div class="content-block-info">
+            <h3>Body Content</h3>
+            <span class="content-block-hint">Text blocks, exhibits & interactives</span>
+          </div>
+        </div>
+        <div id="body-blocks-preview" class="content-block-preview">
+          <p class="empty-state">Loading body blocks...</p>
+        </div>
+        <div class="content-block-actions">
+          <button id="btn-insert-body" class="btn-primary btn-small" disabled>
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 12l7-7 3 3-7 7H2v-3z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.5 3.5l2-2 3 3-2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Insert Body into AEM
+          </button>
+          <button id="btn-discover-page" class="btn-outline btn-small">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6.5 1a5.5 5.5 0 014.38 8.82l4.15 4.15a.75.75 0 01-1.06 1.06l-4.15-4.15A5.5 5.5 0 116.5 1zm0 1.5a4 4 0 100 8 4 4 0 000-8z" fill="currentColor"/></svg>
+            Discover Page
+          </button>
+          <button id="btn-probe-siblings" class="btn-outline btn-small">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1v6m0 0v6m0-6h6m-6 0H2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Probe Siblings
+          </button>
+        </div>
+        <div id="body-log" class="console-log hidden"></div>
       </div>
     </div>
   </section>
 
-  <script src="sidepanel.js"></script>
+  <script type="module" src="sidepanel/index.js"></script>
 </body>
 </html>

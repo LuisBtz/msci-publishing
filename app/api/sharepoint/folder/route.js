@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { graphRequest, downloadFile, listFolder, DRIVE_ID } from '@/lib/graph'
-import { buildExhibitPaths } from '@/lib/exhibit-parser'
+import { buildExhibitPaths } from '@/lib/exhibits/exhibit-parser'
 
 function extractFolderPath(sharepointUrl) {
   try {

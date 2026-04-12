@@ -17,7 +17,8 @@
     "default_title": "MSCI AEM Publisher"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background/index.js",
+    "type": "module"
   },
   "side_panel": {
     "default_path": "sidepanel.html"

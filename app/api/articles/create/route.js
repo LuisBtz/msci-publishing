@@ -14,7 +14,7 @@ export async function POST(req) {
       type, headline, slug, final_url, meta_description,
       read_time, authors, bullets, body_blocks, footnotes,
       related_resources, tags, sharepoint_folder_url,
-      banner_paths, exhibit_paths
+      banner_paths, exhibit_paths, _body_hash
     } = body
 
     if (!headline || !slug) {
@@ -58,6 +58,7 @@ export async function POST(req) {
         sharepoint_folder_url: sharepoint_folder_url || null,
         banner_paths: banner_paths || {},
         exhibit_paths: exhibit_paths || {},
+        _body_hash: _body_hash || null,
         export_json
       })
       .select('id')
