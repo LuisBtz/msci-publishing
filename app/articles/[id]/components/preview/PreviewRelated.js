@@ -33,7 +33,7 @@ export default function PreviewRelated({ resources }) {
               gap: '24px',
             }}
           >
-            <h4 style={{ ...type.h4 }}>{r.title}</h4>
+            <h4 style={{ ...type.h4 }}>{(r.title || '').replace(/\s*\|\s*MSCI.*$/i, '')}</h4>
             {r.meta_description && (
               <p style={{ ...type.bodyS, color: t.black, margin: 0, flex: 1 }}>
                 {r.meta_description}

@@ -23,6 +23,19 @@ export const state = {
   completedSteps: new Set(),
   visitedSteps: new Set([1]),
   initializedSteps: new Set(),
+  /** Global process logs keyed by section */
+  processLogs: {
+    assets: [],
+    page: [],
+    keyFindings: [],
+    bodyContent: [],
+    authors: [],
+    relatedContent: [],
+    footnotes: [],
+    cleanup: [],
+  },
+  /** Final publish report object (saved to Supabase) */
+  processReport: null,
 }
 
 export function setArticles(next) {
@@ -46,4 +59,23 @@ export function resetSessionSets() {
   state.initializedSteps.clear()
   state.visitedSteps.clear()
   state.visitedSteps.add(1)
+  resetProcessState()
+}
+
+export function resetProcessState() {
+  state.processLogs = {
+    assets: [],
+    page: [],
+    keyFindings: [],
+    bodyContent: [],
+    authors: [],
+    relatedContent: [],
+    footnotes: [],
+    cleanup: [],
+  }
+  state.processReport = null
+}
+
+export function setProcessReport(report) {
+  state.processReport = report
 }

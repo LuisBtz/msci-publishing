@@ -25,7 +25,7 @@ async function supabaseFetch(endpoint) {
 const ARTICLE_SELECT =
   'id,headline,slug,status,type,publish_date,authors,tags,meta_description,read_time,' +
   'exhibit_paths,banner_paths,body_blocks,footnotes,bullets,related_resources,final_url,' +
-  'sharepoint_folder_url,updated_at'
+  'sharepoint_folder_url,updated_at,publish_report'
 
 export async function loadArticles() {
   const list = document.getElementById('articles-list')

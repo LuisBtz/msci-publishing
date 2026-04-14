@@ -1,21 +1,19 @@
 /**
  * Step navigation
  *
- * Three sibling functions that drive the wizard's step machinery:
+ * Three-step wizard: Select → Process → Report
  *
  *   - goToStep: switches the active step content, updates the step
  *     indicator classes and calls the right populateStepX() once per
  *     session (so back/forward preserves DOM state).
  *   - refreshStepBar: recomputes the indicator classes without
- *     changing the active step (used after a publish/create success
- *     completes a step in-place).
+ *     changing the active step.
  *   - handleStepIndicatorClick: lets the user jump freely between
  *     visited/completed steps; clicking step 1 resets the session.
  */
 import { state, setCurrentStep, setSelectedArticle, resetSessionSets } from '../state.js'
-import { populateStep2 } from './step2Assets.js'
-import { populateStep3 } from './step3Page.js'
-import { populateStep4 } from './step4Content.js'
+import { populateStep2 } from './step2Process.js'
+import { populateStep3 } from './step3Report.js'
 
 export function goToStep(step) {
   setCurrentStep(step)
@@ -37,7 +35,6 @@ export function goToStep(step) {
     state.initializedSteps.add(step)
     if (step === 2) populateStep2()
     if (step === 3) populateStep3()
-    if (step === 4) populateStep4()
   }
 }
 

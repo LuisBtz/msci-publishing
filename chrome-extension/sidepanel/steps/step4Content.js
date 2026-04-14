@@ -44,8 +44,118 @@ export function populateStep4() {
   `
   btnCopy.textContent = 'Copy HTML'
 
+  // Populate authors preview
+  populateAuthorsPreview(a)
+
+  // Populate footnotes preview
+  populateFootnotesPreview(a)
+
+  // Populate related content preview
+  populateRelatedContentPreview(a)
+
   // Populate body blocks preview
   populateBodyBlocksPreview(a)
+}
+
+function populateAuthorsPreview(article) {
+  const container = document.getElementById('authors-preview')
+  const btnInsert = document.getElementById('btn-insert-authors')
+  const authors = article.authors || []
+
+  if (authors.length === 0) {
+    container.innerHTML = '<p class="empty-state">No authors for this article</p>'
+    btnInsert.disabled = true
+    return
+  }
+  btnInsert.disabled = false
+
+  let html = '<div class="body-blocks-list">'
+  authors.forEach((a, i) => {
+    const cfPath = a.content_fragment_path || '(no path)'
+    html += `
+      <div class="body-block-item body-block-text">
+        <span class="body-block-badge text">${i + 1}</span>
+        <div class="body-block-content">
+          <span class="body-block-type">${escHtml(a.name)}</span>
+          <span class="body-block-excerpt" style="font-family:monospace;font-size:11px;">${escHtml(cfPath)}</span>
+        </div>
+      </div>`
+  })
+  html += '</div>'
+  html += `<p class="body-blocks-count">${authors.length} author${authors.length !== 1 ? 's' : ''} — ${Math.ceil(authors.length / 2)} row(s) of 2 columns</p>`
+  container.innerHTML = html
+
+  // Reset log
+  document.getElementById('authors-log').classList.add('hidden')
+  document.getElementById('authors-log').innerHTML = ''
+}
+
+function populateFootnotesPreview(article) {
+  const container = document.getElementById('footnotes-preview')
+  const btnInsert = document.getElementById('btn-insert-footnotes')
+  const footnotes = article.footnotes || []
+
+  if (footnotes.length === 0) {
+    container.innerHTML = '<p class="empty-state">No footnotes for this article</p>'
+    btnInsert.disabled = true
+    return
+  }
+  btnInsert.disabled = false
+
+  let html = '<div class="body-blocks-list">'
+  footnotes.forEach((f, i) => {
+    const plainText = f.text ? f.text.replace(/<[^>]+>/g, '').substring(0, 120) : '(empty)'
+    html += `
+      <div class="body-block-item body-block-text">
+        <span class="body-block-badge text">${escHtml(f.number || String(i + 1))}</span>
+        <div class="body-block-content">
+          <span class="body-block-excerpt">${escHtml(plainText)}${plainText.length >= 120 ? '...' : ''}</span>
+        </div>
+      </div>`
+  })
+  html += '</div>'
+  html += `<p class="body-blocks-count">${footnotes.length} footnote${footnotes.length !== 1 ? 's' : ''}</p>`
+  container.innerHTML = html
+
+  // Reset log
+  document.getElementById('footnotes-log').classList.add('hidden')
+  document.getElementById('footnotes-log').innerHTML = ''
+}
+
+function populateRelatedContentPreview(article) {
+  const container = document.getElementById('related-preview')
+  const btnInsert = document.getElementById('btn-insert-related')
+  const resources = article.related_resources || []
+
+  if (resources.length === 0) {
+    container.innerHTML = '<p class="empty-state">No related content for this article</p>'
+    btnInsert.disabled = true
+    return
+  }
+  btnInsert.disabled = false
+
+  let html = '<div class="body-blocks-list">'
+  resources.forEach((r, i) => {
+    const title = (r.title || '(no title)').replace(/\s*\|\s*MSCI.*$/i, '')
+    const desc = r.meta_description || ''
+    const cta = r.cta_label || 'Read more'
+    html += `
+      <div class="body-block-item body-block-text">
+        <span class="body-block-badge text">${i + 1}</span>
+        <div class="body-block-content">
+          <span class="body-block-type">${escHtml(title)}</span>
+          <span class="body-block-excerpt" style="font-size:11px;">${escHtml(desc.substring(0, 100))}${desc.length > 100 ? '...' : ''}</span>
+          <span class="body-block-excerpt" style="font-family:monospace;font-size:10px;color:#888;">${escHtml(cta)}</span>
+        </div>
+      </div>`
+  })
+  html += '</div>'
+  html += `<p class="body-blocks-count">${resources.length} related card${resources.length !== 1 ? 's' : ''} — 3 grid cards max</p>`
+  container.innerHTML = html
+
+  // Reset log
+  document.getElementById('related-log').classList.add('hidden')
+  document.getElementById('related-log').innerHTML = ''
 }
 
 function populateBodyBlocksPreview(article) {
@@ -178,7 +288,25 @@ export function buildKeyFindingsPayload(bullets) {
 export function buildBodyBlocksPayload(article) {
   const blocks = article.body_blocks || []
   const exhibitPaths = article.exhibit_paths || {}
-  const items = exhibitPaths.items || []
+
+  // Resolve an exhibit by index, supporting both items[] and legacy formats
+  function resolveExhibit(idx) {
+    if (idx == null) return null
+    // Current format: items[]
+    if (Array.isArray(exhibitPaths.items) && exhibitPaths.items[idx]) {
+      return exhibitPaths.items[idx]
+    }
+    // Legacy fallback: statics[] / interactives[] / summary[]
+    const { statics = [], interactives = [], summary = [] } = exhibitPaths
+    const s = summary[idx]
+    if (!s) return null
+    if (s.type === 'static') return statics[idx] ? { ...statics[idx], type: 'static' } : null
+    if (s.type === 'interactive') {
+      const iIdx = idx - statics.length
+      return interactives[iIdx] ? { ...interactives[iIdx], type: 'interactive' } : null
+    }
+    return null
+  }
 
   return blocks.map((block) => {
     if (block.type === 'text') {
@@ -187,7 +315,7 @@ export function buildBodyBlocksPayload(article) {
 
     if (block.type === 'exhibit') {
       const idx = block.sharepoint_index ?? block.exhibit_index
-      const exhibit = idx != null ? items[idx] : null
+      const exhibit = resolveExhibit(idx)
       const exhibitType = exhibit?.type || block.exhibit_type || block.sharepoint_data?.type || 'static'
 
       const payload = {

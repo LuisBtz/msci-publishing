@@ -24,6 +24,7 @@ import ArticleSidebar from './components/ArticleSidebar'
 import ArticleTabs from './components/ArticleTabs'
 import MetadataTab from './components/tabs/MetadataTab'
 import ContentTab from './components/tabs/ContentTab'
+import ReportTab from './components/tabs/ReportTab'
 import ScriptModal from './components/ScriptModal'
 
 const layoutStyle = {
@@ -172,6 +173,8 @@ export default function ArticlePage() {
               copyRich={copyRich}
             />
           )}
+
+          {activeTab === 'report' && <ReportTab article={article} />}
         </div>
 
         <ArticleSidebar

@@ -9,6 +9,7 @@
 const TABS = [
   { key: 'metadata', label: 'Metadata' },
   { key: 'content', label: 'Content' },
+  { key: 'report', label: 'Report' },
 ]
 
 export default function ArticleTabs({ active, onChange }) {

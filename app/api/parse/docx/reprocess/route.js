@@ -236,6 +236,19 @@ export async function POST(req) {
       tags = parseJson(message2.content[0].text)
     } catch {}
 
+    // Normalize href paths inside body text blocks
+    if (parsed.body_blocks) {
+      parsed.body_blocks = parsed.body_blocks.map((block) => {
+        if (block.type !== 'text' || !block.html) return block
+        return {
+          ...block,
+          html: block.html.replace(/href="([^"]+)"/g, (_m, url) => {
+            return `href="${toAemPath(url)}"`
+          }),
+        }
+      })
+    }
+
     // Enrich body_blocks with SharePoint items
     if (parsed.body_blocks && exhibitsSummary?.items) {
       parsed.body_blocks = parsed.body_blocks.map((block) => {

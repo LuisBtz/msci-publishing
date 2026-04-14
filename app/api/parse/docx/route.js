@@ -109,6 +109,22 @@ export async function POST(req) {
       console.error('Tags parse failed')
     }
 
+    // ── Normalize href paths inside body text blocks ──────────────────────────
+    // Claude's prompt includes link-rewrite rules but doesn't always apply
+    // them correctly (e.g. /indexes/ pages mapped to /content/msci instead of
+    // /content/ipc).  Running toAemPath over every href makes this deterministic.
+    if (parsed.body_blocks) {
+      parsed.body_blocks = parsed.body_blocks.map((block) => {
+        if (block.type !== 'text' || !block.html) return block
+        return {
+          ...block,
+          html: block.html.replace(/href="([^"]+)"/g, (_m, url) => {
+            return `href="${toAemPath(url)}"`
+          }),
+        }
+      })
+    }
+
     // ── Enrich body_blocks with real SharePoint items ────────────────────────
     // sharepoint_index is a 0-based position directly into items[].
     if (parsed.body_blocks && exhibitsSummary?.items) {

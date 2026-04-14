@@ -60,6 +60,30 @@ export function runInAEM(message, logElementId) {
   })
 }
 
+/**
+ * Like runInAEM but does NOT write to a DOM element. Returns { success, logs }
+ * so the caller can accumulate logs into the global process log.
+ */
+export function runInAEMSilent(message) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve({
+          success: false,
+          logs: [{ type: 'error', message: chrome.runtime.lastError.message }],
+        })
+        return
+      }
+      const res = response || { success: false, error: 'No response from background' }
+      const logs = Array.isArray(res.logs) ? res.logs : []
+      if (!res.success && res.error) {
+        logs.push({ type: 'error', message: res.error })
+      }
+      resolve({ ...res, success: !!res.success, logs })
+    })
+  })
+}
+
 export function checkAEMConnection() {
   chrome.runtime.sendMessage({ type: 'PING_AEM' }, (response) => {
     const dot = document.getElementById('connection-status')

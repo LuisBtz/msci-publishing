@@ -25,17 +25,12 @@
     <div class="step-line"></div>
     <div class="step" data-step="2">
       <div class="step-number">2</div>
-      <div class="step-label">Assets</div>
+      <div class="step-label">Process</div>
     </div>
     <div class="step-line"></div>
     <div class="step" data-step="3">
       <div class="step-number">3</div>
-      <div class="step-label">Page</div>
-    </div>
-    <div class="step-line"></div>
-    <div class="step" data-step="4">
-      <div class="step-number">4</div>
-      <div class="step-label">Content</div>
+      <div class="step-label">Report</div>
     </div>
   </div>
 
@@ -43,7 +38,7 @@
   <div id="validation-overlay" class="hidden">
     <div class="validation-overlay-card">
       <div class="validation-spinner"></div>
-      <div id="validation-overlay-text">Validando estado en AEM…</div>
+      <div id="validation-overlay-text">Checking AEM status...</div>
     </div>
   </div>
 
@@ -69,163 +64,73 @@
     </div>
   </section>
 
-  <!-- Step 2: Publish Assets to DAM -->
+  <!-- Step 2: Automated Process -->
   <section id="step-2" class="step-content">
     <button class="btn-back" id="btn-back-2">&larr; Back to articles</button>
     <div class="selected-article-header">
-      <h2 id="step2-title"></h2>
-      <span id="step2-status" class="badge"></span>
+      <h2 id="process-title"></h2>
     </div>
 
-    <div id="step2-validation" class="validation-card hidden"></div>
+    <div id="process-description" class="info-card process-desc-card"></div>
 
-    <div class="info-card">
-      <h3>Assets Summary</h3>
-      <div id="assets-summary">
-        <div class="summary-row">
-          <span>Exhibits</span>
-          <span id="exhibits-count" class="count-badge">0</span>
-        </div>
-        <div class="summary-row">
-          <span>Banners</span>
-          <span id="banners-count" class="count-badge">0</span>
-        </div>
-      </div>
-    </div>
-
-    <div id="assets-freshness" class="info-card">
-      <h3>SharePoint URLs</h3>
-      <div id="freshness-indicator" class="freshness-row">
-        <span class="freshness-dot"></span>
-        <span id="freshness-label">Checking...</span>
-      </div>
-      <div id="freshness-detail" class="freshness-detail"></div>
-      <button id="btn-refresh-assets" class="btn-refresh-assets">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13.65 2.35A7.96 7.96 0 008 0C3.58 0 .01 3.58.01 8S3.58 16 8 16c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 018 14 6 6 0 012 8a6 6 0 016-6c1.66 0 3.14.69 4.22 1.78L9 7h7V0l-2.35 2.35z" fill="currentColor"/></svg>
-        Refresh URLs
-      </button>
-    </div>
-
-    <div class="info-card">
-      <h3>DAM Target</h3>
-      <code id="dam-path" class="path-display"></code>
-      <a id="dam-link" href="#" target="_blank" class="link-external">Open in AEM DAM</a>
-    </div>
-
-    <button id="btn-publish-assets" class="btn-primary">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1v10M4 5l4-4 4 4M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      Publish Assets to DAM
+    <button id="btn-start-process" class="btn-primary">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><polygon points="5,3 13,8 5,13" fill="currentColor"/></svg>
+      Start process
     </button>
 
-    <div id="assets-log" class="console-log hidden"></div>
+    <!-- Phase A: Assets -->
+    <div class="phase-card" id="phase-assets">
+      <div class="phase-header">
+        <div class="phase-icon">A</div>
+        <div class="phase-info">
+          <h3>Assets &rarr; DAM</h3>
+        </div>
+      </div>
+      <div class="phase-status"></div>
+      <div id="conflict-assets" class="hidden"></div>
+    </div>
 
-    <button id="btn-goto-step3" class="btn-secondary hidden">
-      Continue to Create Page &rarr;
-    </button>
+    <!-- Phase B: Page -->
+    <div class="phase-card" id="phase-page">
+      <div class="phase-header">
+        <div class="phase-icon">B</div>
+        <div class="phase-info">
+          <h3>Create Page</h3>
+        </div>
+      </div>
+      <div class="phase-status"></div>
+      <div id="conflict-page" class="hidden"></div>
+    </div>
+
+    <!-- Phase C: Content -->
+    <div class="phase-card" id="phase-content">
+      <div class="phase-header">
+        <div class="phase-icon">C</div>
+        <div class="phase-info">
+          <h3>Inject Content</h3>
+        </div>
+      </div>
+      <div class="phase-status"></div>
+    </div>
   </section>
 
-  <!-- Step 3: Create AEM Page -->
+  <!-- Step 3: Report -->
   <section id="step-3" class="step-content">
-    <button class="btn-back" id="btn-back-3">&larr; Back to Assets</button>
+    <button class="btn-back" id="btn-back-3">&larr; Back to process</button>
     <div class="selected-article-header">
-      <h2 id="step3-title"></h2>
+      <h2>Publish Report</h2>
     </div>
-
-    <div id="step3-validation" class="validation-card hidden"></div>
-
-    <div class="info-card">
-      <h3>Page Properties</h3>
-      <div class="prop-grid">
-        <div class="prop-item"><label>Slug</label><span id="prop-slug"></span></div>
-        <div class="prop-item"><label>Type</label><span id="prop-type"></span></div>
-        <div class="prop-item"><label>Publish Date</label><span id="prop-date"></span></div>
-        <div class="prop-item"><label>Read Time</label><span id="prop-readtime"></span></div>
-        <div class="prop-item"><label>Authors</label><span id="prop-authors"></span></div>
-        <div class="prop-item"><label>Tags</label><span id="prop-tags-count"></span></div>
-        <div id="prop-tags-list" class="tags-list"></div>
-      </div>
-    </div>
-
-    <button id="btn-create-page" class="btn-primary">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M9 1H3a1 1 0 00-1 1v12a1 1 0 001 1h10a1 1 0 001-1V6L9 1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 1v5h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      Create AEM Page
-    </button>
-
-    <div id="page-log" class="console-log hidden"></div>
-
-    <div id="page-links" class="info-card hidden">
-      <h3>Page Created</h3>
-      <a id="link-edit-page" href="#" target="_blank" class="link-external">Edit page in AEM</a>
-      <a id="link-sites-view" href="#" target="_blank" class="link-external">Open in Sites view</a>
-    </div>
-
-    <button id="btn-goto-step4" class="btn-secondary hidden">
-      Continue to Content &rarr;
-    </button>
+    <div id="report-content"></div>
   </section>
 
-  <!-- Step 4: Content Blocks -->
-  <section id="step-4" class="step-content">
-    <button class="btn-back" id="btn-back-4">&larr; Back to Page</button>
-    <div class="selected-article-header">
-      <h2 id="step4-title"></h2>
+  <!-- Global Log Panel (fixed bottom) -->
+  <div id="global-log">
+    <div id="global-log-toggle">
+      <span>Logs</span>
+      <span id="global-log-badge" class="log-badge hidden"></span>
     </div>
-
-    <div id="content-blocks">
-      <!-- Block 1: Key Findings -->
-      <div class="content-block" id="block-key-findings">
-        <div class="content-block-header">
-          <div class="content-block-number">1</div>
-          <div class="content-block-info">
-            <h3>Key Findings</h3>
-            <span class="content-block-hint">Inserts into the first empty RTE below "Key findings"</span>
-          </div>
-        </div>
-        <div id="kf-preview" class="content-block-preview">
-          <p class="empty-state">No key findings</p>
-        </div>
-        <div class="content-block-actions">
-          <button id="btn-insert-kf" class="btn-primary btn-small" disabled>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 12l7-7 3 3-7 7H2v-3z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.5 3.5l2-2 3 3-2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Insert into AEM
-          </button>
-          <button id="btn-copy-kf" class="btn-outline btn-small" disabled>
-            Copy HTML
-          </button>
-        </div>
-        <div id="kf-log" class="console-log hidden"></div>
-      </div>
-
-      <!-- Block 2: Body Content -->
-      <div class="content-block" id="block-body-content">
-        <div class="content-block-header">
-          <div class="content-block-number">2</div>
-          <div class="content-block-info">
-            <h3>Body Content</h3>
-            <span class="content-block-hint">Text blocks, exhibits & interactives</span>
-          </div>
-        </div>
-        <div id="body-blocks-preview" class="content-block-preview">
-          <p class="empty-state">Loading body blocks...</p>
-        </div>
-        <div class="content-block-actions">
-          <button id="btn-insert-body" class="btn-primary btn-small" disabled>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 12l7-7 3 3-7 7H2v-3z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.5 3.5l2-2 3 3-2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Insert Body into AEM
-          </button>
-          <button id="btn-discover-page" class="btn-outline btn-small">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6.5 1a5.5 5.5 0 014.38 8.82l4.15 4.15a.75.75 0 01-1.06 1.06l-4.15-4.15A5.5 5.5 0 116.5 1zm0 1.5a4 4 0 100 8 4 4 0 000-8z" fill="currentColor"/></svg>
-            Discover Page
-          </button>
-          <button id="btn-probe-siblings" class="btn-outline btn-small">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1v6m0 0v6m0-6h6m-6 0H2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-            Probe Siblings
-          </button>
-        </div>
-        <div id="body-log" class="console-log hidden"></div>
-      </div>
-    </div>
-  </section>
+    <div id="global-log-content" class="console-log"></div>
+  </div>
 
   <script type="module" src="sidepanel/index.js"></script>
 </body>

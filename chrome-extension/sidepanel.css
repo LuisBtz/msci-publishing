@@ -129,6 +129,7 @@ body {
 .step-content {
   display: none;
   padding: 16px;
+  padding-bottom: 44px;
 }
 .step-content.active { display: block; }
 
@@ -739,6 +740,314 @@ body {
   font-weight: 700;
   line-height: 1.3;
   margin-bottom: 4px;
+}
+
+/* ─── Phase Cards (Step 2 Process) ────────────────────────────── */
+.process-desc-card {
+  line-height: 1.6;
+}
+.process-desc-card p { margin-bottom: 8px; }
+.process-desc-card ul {
+  padding-left: 18px;
+  margin: 0;
+}
+.process-desc-card li {
+  font-size: 12px;
+  color: #555;
+  margin-bottom: 2px;
+}
+
+.phase-card {
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 10px;
+  transition: border-color 0.2s;
+}
+.phase-card.phase-running { border-left: 3px solid #3b82f6; }
+.phase-card.phase-done { border-left: 3px solid #22c55e; }
+.phase-card.phase-error { border-left: 3px solid #ef4444; }
+.phase-card.phase-warning { border-left: 3px solid #eab308; }
+
+.phase-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.phase-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #e5e5e5;
+  color: #666;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.phase-card.phase-running .phase-icon { background: #3b82f6; color: #fff; }
+.phase-card.phase-done .phase-icon { background: #22c55e; color: #fff; }
+.phase-card.phase-error .phase-icon { background: #ef4444; color: #fff; }
+.phase-card.phase-warning .phase-icon { background: #eab308; color: #fff; }
+
+.phase-info h3 {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.phase-status {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #555;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+}
+
+.phase-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #e5e5e5;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.phase-check { color: #22c55e; font-weight: 700; }
+.phase-x { color: #ef4444; font-weight: 700; }
+.phase-warn { color: #eab308; font-weight: 700; }
+
+/* ─── Conflict Cards ─────────────────────────────────────────── */
+.conflict-card {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.conflict-card p { margin-bottom: 6px; }
+.conflict-card code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  background: rgba(234, 179, 8, 0.15);
+  padding: 1px 4px;
+  border-radius: 3px;
+  word-break: break-all;
+}
+.conflict-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.custom-slug-input-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.custom-slug-input-row input {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ─── Report (Step 3) ────────────────────────────────────────── */
+.report-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.report-status-success {
+  background: #f0fdf4;
+  color: #065f46;
+  border: 1px solid #bbf7d0;
+}
+.report-status-warning {
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+.report-status-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.report-status-success .report-status-icon { background: #22c55e; color: #fff; }
+.report-status-warning .report-status-icon { background: #eab308; color: #fff; }
+.report-duration {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.report-links,
+.report-meta,
+.report-summary,
+.report-errors {
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.report-links h3,
+.report-meta h3,
+.report-summary h3,
+.report-errors h3 {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #999;
+  margin-bottom: 8px;
+}
+
+.report-link-row,
+.report-meta-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.report-link-label,
+.report-meta-label {
+  font-weight: 600;
+  color: #666;
+  min-width: 80px;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.report-meta-desc {
+  font-size: 11px;
+  color: #555;
+  line-height: 1.4;
+}
+
+.report-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.report-stat {
+  text-align: center;
+  padding: 8px 4px;
+  background: #f7f7f8;
+  border-radius: 6px;
+}
+.report-stat-num {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+.report-stat-label {
+  font-size: 10px;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.report-errors {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+.report-errors ul {
+  padding-left: 16px;
+  margin: 0;
+}
+.report-errors li {
+  font-size: 12px;
+  color: #dc2626;
+  margin-bottom: 4px;
+}
+
+/* ─── Global Log Panel ───────────────────────────────────────── */
+#global-log {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 150;
+  background: #1a1a1a;
+  border-top: 2px solid #333;
+  transition: max-height 0.3s ease;
+  max-height: 32px;
+  overflow: hidden;
+}
+#global-log.open {
+  max-height: 50vh;
+}
+
+#global-log-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  cursor: pointer;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+  user-select: none;
+}
+#global-log-toggle:hover { color: #e2e8f0; }
+
+.log-badge {
+  background: #3b82f6;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+}
+
+#global-log-content {
+  max-height: calc(50vh - 32px);
+  overflow-y: auto;
+  padding: 0 12px 12px;
+  margin: 0;
+  border-radius: 0;
+  font-size: 10px;
+}
+
+.log-section {
+  margin-bottom: 8px;
+}
+.log-section-header {
+  color: #60a5fa;
+  font-weight: 700;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 8px 0 4px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid #333;
 }
 
 /* ─── Body Blocks Preview ──────────────────────────────────────── */

@@ -52,9 +52,9 @@ export default function RelatedContentSection({ article, copied, copy }) {
               >
                 <RelatedRow
                   label="Title"
-                  value={r.title}
+                  value={(r.title || '').replace(/\s*\|\s*MSCI.*$/i, '')}
                   copied={copied[`rt_${i}`]}
-                  onCopy={() => copy(`rt_${i}`, r.title)}
+                  onCopy={() => copy(`rt_${i}`, (r.title || '').replace(/\s*\|\s*MSCI.*$/i, ''))}
                 />
                 <RelatedRow
                   label="Meta Description"

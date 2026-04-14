@@ -7,7 +7,7 @@
  */
 export function showValidationOverlay(text) {
   const overlay = document.getElementById('validation-overlay')
-  document.getElementById('validation-overlay-text').textContent = text || 'Validando…'
+  document.getElementById('validation-overlay-text').textContent = text || 'Checking...'
   overlay.classList.remove('hidden')
 }
 
