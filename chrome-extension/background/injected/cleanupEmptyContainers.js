@@ -1,15 +1,26 @@
 /**
  * cleanupEmptyContainers (INJECTED)
  *
- * After all content modules have been injected, this script walks
- * the page's JCR tree looking for Theme Container v2 nodes (or any
- * other component) that have no meaningful child content. Empty
- * containers are deleted via Sling POST so the published page
- * doesn't show blank sections.
+ * After all content modules have been injected, this script walks the
+ * page's entire JCR tree (root/main + descendants) and deletes any
+ * component that has no meaningful content. Spacer components are
+ * always preserved since they are intentional margin injectors.
  *
- * SELF-CONTAINED: serialized via chrome.scripting — ALL helper
- * functions must be defined INSIDE this function because Chrome
- * only serializes the target function, not sibling declarations.
+ * Algorithm:
+ *   1. Fetch the full JCR tree under root/main with deep traversal.
+ *   2. Walk every node, classify each child as:
+ *        - metadata (skip)
+ *        - spacer (keep)
+ *        - wrapper (responsivegrid — has content iff any descendant has content)
+ *        - container (themecontainerv2, container — same rule)
+ *        - leaf component (text, image, cf, etc.) — has content iff any
+ *          non-metadata property is truthy OR has child nodes with content
+ *   3. Collect every node that is NOT a spacer and is empty.
+ *   4. Delete deepest paths first so we don't delete a parent before its
+ *      empty children (each delete shortens siblings only).
+ *
+ * SELF-CONTAINED: serialized via chrome.scripting — ALL helpers must
+ * be defined INSIDE this function.
  */
 export async function cleanupEmptyContainers(slug) {
   const logs = []
@@ -17,38 +28,125 @@ export async function cleanupEmptyContainers(slug) {
   const logErr = (m) => logs.push({ type: 'error', message: m })
   const logWarn = (m) => logs.push({ type: 'warn', message: m })
 
+  const SPACER_MARKERS = ['spacer']
+  const WRAPPER_MARKERS = ['responsivegrid', 'wcm/foundation/components/responsivegrid']
+  // Content-bearing property names (for leaf components)
+  const CONTENT_PROPS = [
+    'text',
+    'textIsRich',
+    'fileReference',
+    'fragmentPath',
+    'contentFragmentPath',
+    'profilePath',
+    'linkURL',
+    'ctaLink',
+    'ctaLabel',
+    'title',
+    'heading',
+    'description',
+    'jcr:title',
+    'jcr:description',
+    'src',
+    'textAsJson',
+    'derivedDom',
+  ]
+
+  function isMetadataKey(key) {
+    return (
+      key.startsWith('jcr:') ||
+      key.startsWith('sling:') ||
+      key.startsWith(':') ||
+      key === 'cq:styleIds' ||
+      key === 'cq:responsive' ||
+      key === 'cq:panelTitle'
+    )
+  }
+
+  function isSpacer(resourceType) {
+    if (!resourceType) return false
+    const rt = resourceType.toLowerCase()
+    return SPACER_MARKERS.some((m) => rt.includes(m))
+  }
+
+  function isWrapper(resourceType) {
+    if (!resourceType) return false
+    const rt = resourceType.toLowerCase()
+    return WRAPPER_MARKERS.some((m) => rt.includes(m))
+  }
+
   /**
-   * Recursively checks whether a container node has any meaningful
-   * child content (text, images, content fragments, etc.).
-   * A container is "empty" if it only has JCR metadata properties
-   * and responsivegrid children that themselves are empty.
+   * Checks whether a node has any meaningful content. A node has
+   * content if:
+   *   - any content property has a non-empty value, OR
+   *   - any child (non-metadata) node itself has content
    */
-  function checkContainerHasContent(node) {
+  function hasContent(node) {
     if (!node || typeof node !== 'object') return false
 
+    // Property-based content (leaf components)
+    for (const prop of CONTENT_PROPS) {
+      const v = node[prop]
+      if (v === undefined || v === null) continue
+      if (typeof v === 'string' && v.trim() === '') continue
+      if (Array.isArray(v) && v.length === 0) continue
+      if (typeof v === 'object' && Object.keys(v).length === 0) continue
+      return true
+    }
+
+    // Recurse into child nodes
     for (const [key, value] of Object.entries(node)) {
-      // Skip JCR/Sling metadata
-      if (key.startsWith('jcr:') || key.startsWith(':') || key.startsWith('sling:')) continue
-      if (key === 'cq:styleIds' || key === 'cq:responsive') continue
+      if (isMetadataKey(key)) continue
+      if (typeof value !== 'object' || value === null) continue
 
-      if (typeof value === 'object' && value !== null) {
-        const childType = value['sling:resourceType'] || ''
+      const childRT = value['sling:resourceType'] || ''
 
-        // responsivegrid is a wrapper — check its children
-        if (childType.includes('responsivegrid') || childType.includes('wcm/foundation/components/responsivegrid')) {
-          if (checkContainerHasContent(value)) return true
-          continue
-        }
+      // A spacer child counts as content — it's intentional
+      if (isSpacer(childRT)) return true
 
-        // If there's a non-grid child component, container has content
-        if (childType && !childType.includes('responsivegrid')) return true
-
-        // Object with no resourceType — check deeper
-        if (checkContainerHasContent(value)) return true
-      }
+      // Wrappers & containers — dive in
+      if (hasContent(value)) return true
     }
 
     return false
+  }
+
+  /**
+   * Recursively walks the tree collecting every empty, non-spacer,
+   * non-wrapper component path. Wrappers (responsivegrid) are kept
+   * because removing them breaks the layout — instead we remove
+   * their empty content descendants.
+   */
+  function collectEmpty(node, basePath, found, depth) {
+    if (!node || typeof node !== 'object') return
+
+    for (const [key, value] of Object.entries(node)) {
+      if (isMetadataKey(key)) continue
+      if (typeof value !== 'object' || value === null) continue
+
+      const childPath = `${basePath}/${key}`
+      const childRT = value['sling:resourceType'] || ''
+
+      // Always recurse first to gather deeper empties
+      if (childRT) {
+        collectEmpty(value, childPath, found, depth + 1)
+      }
+
+      // Skip spacers
+      if (isSpacer(childRT)) continue
+
+      // Wrappers (responsivegrid): only delete if fully empty AND not root
+      if (isWrapper(childRT)) {
+        if (!hasContent(value) && depth > 0) {
+          found.push({ path: childPath, name: key, rt: childRT, depth })
+        }
+        continue
+      }
+
+      // Any other component with a resourceType — check emptiness
+      if (childRT && !hasContent(value)) {
+        found.push({ path: childPath, name: key, rt: childRT, depth })
+      }
+    }
   }
 
   try {
@@ -56,7 +154,8 @@ export async function cleanupEmptyContainers(slug) {
     const mainPath = `${parentPath}/${slug}/jcr:content/root/main`
 
     log('Fetching page structure...')
-    const res = await fetch(`${mainPath}.3.json`, {
+    // Depth 10 is aggressive but necessary to capture nested containers
+    const res = await fetch(`${mainPath}.10.json`, {
       headers: { Accept: 'application/json' },
     })
     if (!res.ok) {
@@ -69,38 +168,30 @@ export async function cleanupEmptyContainers(slug) {
     const token = (await fetch('/libs/granite/csrf/token.json').then((r) => r.json())).token
     if (!token) throw new Error('Could not get CSRF token')
 
-    // Identify container nodes under main
-    const containerResourceTypes = [
-      'webmasters-aem/components/themecontainerv2',
-      'webmasters-aem/components/container',
-    ]
+    // Diagnostic: list all top-level components
+    const topLevel = Object.entries(mainNode)
+      .filter(([k, v]) => !isMetadataKey(k) && v && typeof v === 'object')
+      .map(([k, v]) => ({ name: k, rt: v['sling:resourceType'] || '(no type)' }))
+    log(`Top-level components: ${topLevel.length}`)
+    for (const c of topLevel) log(`  · ${c.name} — ${c.rt}`)
 
-    const emptyPaths = []
+    // Collect empties
+    const found = []
+    collectEmpty(mainNode, mainPath, found, 0)
 
-    for (const [nodeName, nodeData] of Object.entries(mainNode)) {
-      if (!nodeData || typeof nodeData !== 'object') continue
-      if (nodeName.startsWith('jcr:') || nodeName.startsWith(':') || nodeName === 'sling:resourceType') continue
-
-      const resourceType = nodeData['sling:resourceType'] || ''
-      const isContainer = containerResourceTypes.some((rt) => resourceType.includes(rt))
-      if (!isContainer) continue
-
-      // Check if this container has any meaningful child content
-      const hasContent = checkContainerHasContent(nodeData)
-      if (!hasContent) {
-        emptyPaths.push({ name: nodeName, path: `${mainPath}/${nodeName}`, resourceType })
-      }
-    }
-
-    if (emptyPaths.length === 0) {
-      log('No empty containers found.')
+    if (found.length === 0) {
+      log('No empty components found.')
       return { success: true, logs, deletedCount: 0, deletedPaths: [] }
     }
 
-    log(`Found ${emptyPaths.length} empty container(s). Deleting...`)
-    const deletedPaths = []
+    // Sort deepest first so we delete children before parents
+    found.sort((a, b) => b.depth - a.depth)
 
-    for (const container of emptyPaths) {
+    log(`Found ${found.length} empty component(s):`)
+    for (const f of found) log(`  · [depth ${f.depth}] ${f.name} (${f.rt})`)
+
+    const deletedPaths = []
+    for (const container of found) {
       try {
         const delRes = await fetch(container.path, {
           method: 'POST',
@@ -111,17 +202,17 @@ export async function cleanupEmptyContainers(slug) {
           body: ':operation=delete',
         })
         if (delRes.ok) {
-          log(`  Deleted: ${container.name}`)
+          log(`  ✓ Deleted: ${container.name}`)
           deletedPaths.push(container.path)
         } else {
-          logWarn(`  Failed to delete ${container.name}: HTTP ${delRes.status}`)
+          logWarn(`  ✗ Failed to delete ${container.name}: HTTP ${delRes.status}`)
         }
       } catch (e) {
-        logErr(`  Error deleting ${container.name}: ${e.message}`)
+        logErr(`  ✗ Error deleting ${container.name}: ${e.message}`)
       }
     }
 
-    log(`Cleanup complete: ${deletedPaths.length} container(s) removed.`)
+    log(`Cleanup complete: ${deletedPaths.length} component(s) removed.`)
     return { success: true, logs, deletedCount: deletedPaths.length, deletedPaths }
   } catch (err) {
     logErr('Fatal error: ' + err.message)
