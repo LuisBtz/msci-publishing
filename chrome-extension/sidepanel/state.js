@@ -16,66 +16,74 @@
  * around, matching the legacy single-file behavior.
  */
 export const state = {
-  articles: [],
-  selectedArticle: null,
-  currentStep: 1,
-  currentFilter: 'all',
-  completedSteps: new Set(),
-  visitedSteps: new Set([1]),
-  initializedSteps: new Set(),
-  /** Global process logs keyed by section */
-  processLogs: {
-    assets: [],
-    page: [],
-    keyFindings: [],
-    bodyContent: [],
-    authors: [],
-    relatedContent: [],
-    footnotes: [],
-    cleanup: [],
-  },
-  /** Final publish report object (saved to Supabase) */
-  processReport: null,
-}
-
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    articles: [],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    selectedArticle: null,
+    currentStep: 1,
+    currentFilter: 'all',
+    completedSteps: new Set(),
+    visitedSteps: new Set([1]),
+    initializedSteps: new Set(),
+    /** Global process logs keyed by section */
+    processLogs: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        assets: [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        page: [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        keyFindings: [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        bodyContent: [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        authors: [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        relatedContent: [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        footnotes: [],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        cleanup: [],
+    },
+    /** Final publish report object (saved to Supabase) */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    processReport: null,
+    /** Injected content modules from the last process run */
+    _contentModules: [],
+    /** Containers cleaned count from the last process run */
+    _containersCleanedCount: 0,
+};
 export function setArticles(next) {
-  state.articles = next
+    state.articles = next;
 }
-
 export function setSelectedArticle(a) {
-  state.selectedArticle = a
+    state.selectedArticle = a;
 }
-
 export function setCurrentStep(n) {
-  state.currentStep = n
+    state.currentStep = n;
 }
-
 export function setCurrentFilter(f) {
-  state.currentFilter = f
+    state.currentFilter = f;
 }
-
 export function resetSessionSets() {
-  state.completedSteps.clear()
-  state.initializedSteps.clear()
-  state.visitedSteps.clear()
-  state.visitedSteps.add(1)
-  resetProcessState()
+    state.completedSteps.clear();
+    state.initializedSteps.clear();
+    state.visitedSteps.clear();
+    state.visitedSteps.add(1);
+    resetProcessState();
 }
-
 export function resetProcessState() {
-  state.processLogs = {
-    assets: [],
-    page: [],
-    keyFindings: [],
-    bodyContent: [],
-    authors: [],
-    relatedContent: [],
-    footnotes: [],
-    cleanup: [],
-  }
-  state.processReport = null
+    state.processLogs = {
+        assets: [],
+        page: [],
+        keyFindings: [],
+        bodyContent: [],
+        authors: [],
+        relatedContent: [],
+        footnotes: [],
+        cleanup: [],
+    };
+    state.processReport = null;
 }
-
 export function setProcessReport(report) {
-  state.processReport = report
+    state.processReport = report;
 }

@@ -7,7 +7,7 @@
  * whatever weird characters an article title might contain.
  */
 export function escHtml(str) {
-  const div = document.createElement('div')
-  div.textContent = str ?? ''
-  return div.innerHTML
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
 }

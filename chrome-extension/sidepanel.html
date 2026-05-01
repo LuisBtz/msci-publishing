@@ -13,7 +13,13 @@
       <span class="header-logo">M</span>
       <span>AEM Publisher</span>
     </div>
-    <div id="connection-status" class="status-dot disconnected" title="Not connected to AEM"></div>
+    <div class="header-right">
+      <div id="aem-env-toggle" class="env-toggle" role="group" aria-label="AEM environment">
+        <button type="button" class="env-btn active" data-env="stage">Stage</button>
+        <button type="button" class="env-btn" data-env="prod">Prod</button>
+      </div>
+      <div id="connection-status" class="status-dot disconnected" title="Not connected to AEM"></div>
+    </div>
   </header>
 
   <!-- Step Indicator -->

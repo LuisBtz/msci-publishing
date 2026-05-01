@@ -6,11 +6,10 @@
  * this module only toggles the `.hidden` class and sets the label.
  */
 export function showValidationOverlay(text) {
-  const overlay = document.getElementById('validation-overlay')
-  document.getElementById('validation-overlay-text').textContent = text || 'Checking...'
-  overlay.classList.remove('hidden')
+    const overlay = document.getElementById('validation-overlay');
+    document.getElementById('validation-overlay-text').textContent = text || 'Checking...';
+    overlay.classList.remove('hidden');
 }
-
 export function hideValidationOverlay() {
-  document.getElementById('validation-overlay').classList.add('hidden')
+    document.getElementById('validation-overlay').classList.add('hidden');
 }

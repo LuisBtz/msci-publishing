@@ -1,26 +1,116 @@
 @import "tailwindcss";
 
+/* ─── MSCI Design System Tokens ─────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Brand Blues */
+  --color-blue-600: #1A3FD6;
+  --color-blue-400: #7188EF;
+  --color-blue-50:  #F4F5FD;
+
+  /* Neutrals */
+  --color-black:    #000000;
+  --color-gray-900: #222222;
+  --color-gray-700: #707070;
+  --color-gray-300: #CCCCCC;
+  --color-gray-200: #E6E6E6;
+  --color-gray-100: #F0F0F0;
+  --color-gray-50:  #F5F5F5;
+  --color-white:    #FFFFFF;
+
+  /* Accents */
+  --color-orange-500: #F7620E;
+  --color-teal-500:   #00C4B3;
+  --color-green-600:  #118A5E;
+  --color-red-600:    #C8102E;
+
+  /* Semantic */
+  --color-bg-page:   var(--color-white);
+  --color-bg-tint:   var(--color-blue-50);
+  --color-bg-dark:   var(--color-blue-600);
+  --color-bg-subtle: var(--color-gray-50);
+
+  --color-text-primary:   var(--color-black);
+  --color-text-secondary: var(--color-gray-700);
+  --color-text-muted:     #999999;
+  --color-text-on-dark:   var(--color-white);
+  --color-text-link:      var(--color-blue-600);
+
+  --color-border:        var(--color-gray-300);
+  --color-border-light:  var(--color-gray-200);
+  --color-border-active: var(--color-gray-900);
+
+  /* Typography */
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+
+  --text-xs:   12px;
+  --text-sm:   14px;
+  --text-base: 16px;
+  --text-lg:   20px;
+  --text-xl:   24px;
+  --text-2xl:  28px;
+  --text-3xl:  32px;
+  --text-4xl:  42px;
+
+  --font-regular:  400;
+  --font-medium:   500;
+  --font-semibold: 600;
+  --font-bold:     700;
+
+  --leading-tight:  1.2;
+  --leading-snug:   1.3;
+  --leading-normal: 1.5;
+
+  --tracking-tight:    -0.02em;
+  --tracking-snug:     -0.03em;
+  --tracking-tighter:  -0.04em;
+  --tracking-tightest: -0.05em;
+
+  /* Spacing */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-7:  32px;
+  --space-8:  40px;
+  --space-9:  48px;
+
+  /* Radii */
+  --radius-sm:   8px;
+  --radius-md:   12px;
+  --radius-lg:   18px;
+  --radius-pill: 100px;
+
+  /* Shadows */
+  --shadow-card:  0px 4px 4px 0px rgba(0,0,0,0.10);
+  --shadow-modal: 0px 4px 16px 0px rgba(0,0,0,0.25);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --color-background: var(--color-bg-page);
+  --color-foreground: var(--color-text-primary);
+  --font-sans: var(--font-inter), system-ui, sans-serif;
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* ─── Base ────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--font-regular);
+  line-height: var(--leading-normal);
+  letter-spacing: var(--tracking-tight);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-page);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 { margin: 0; }
+p { margin: 0; }
+a {
+  color: var(--color-text-link);
+  text-decoration: none;
 }

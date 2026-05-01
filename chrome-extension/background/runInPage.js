@@ -13,22 +13,23 @@
  * via Function.prototype.toString(), so any closure variables from
  * its module will be undefined in the page context.
  */
-import { getActiveAEMTab } from './aemTabs.js'
-
+import { getActiveAEMTab } from './aemTabs.js';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function runInPage(func, args) {
-  const tab = await getActiveAEMTab()
-  if (!tab) {
-    return { success: false, error: 'Not on AEM Author tab. Open AEM in the active tab.' }
-  }
-  try {
-    const [injection] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: 'MAIN',
-      func,
-      args,
-    })
-    return injection?.result || { success: false, error: 'No result from page' }
-  } catch (err) {
-    return { success: false, error: 'Injection failed: ' + err.message }
-  }
+    const tab = await getActiveAEMTab();
+    if (!tab) {
+        return { success: false, error: 'Not on AEM Author tab. Open AEM in the active tab.' };
+    }
+    try {
+        const [injection] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            world: 'MAIN',
+            func,
+            args,
+        });
+        return injection?.result || { success: false, error: 'No result from page' };
+    }
+    catch (err) {
+        return { success: false, error: 'Injection failed: ' + err.message };
+    }
 }

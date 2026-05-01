@@ -10,27 +10,28 @@
  * SELF-CONTAINED.
  */
 export async function checkPageExistsInAEM(slug) {
-  try {
-    const parentPath = '/content/msci/us/en/research-and-insights/blog-post'
-    const pagePath = `${parentPath}/${slug}`
-    const res = await fetch(`${pagePath}/jcr:content.json`, {
-      headers: { Accept: 'application/json' },
-    })
-    if (res.status === 404) {
-      return { success: true, exists: false, pagePath }
+    try {
+        const parentPath = '/content/msci/us/en/research-and-insights/blog-post';
+        const pagePath = `${parentPath}/${slug}`;
+        const res = await fetch(`${pagePath}/jcr:content.json`, {
+            headers: { Accept: 'application/json' },
+        });
+        if (res.status === 404) {
+            return { success: true, exists: false, pagePath };
+        }
+        if (!res.ok) {
+            return { success: false, error: 'HTTP ' + res.status, pagePath };
+        }
+        const data = await res.json();
+        return {
+            success: true,
+            exists: true,
+            title: data['jcr:title'] || '',
+            template: data['cq:template'] || '',
+            pagePath,
+        };
     }
-    if (!res.ok) {
-      return { success: false, error: 'HTTP ' + res.status, pagePath }
+    catch (err) {
+        return { success: false, error: err.message };
     }
-    const data = await res.json()
-    return {
-      success: true,
-      exists: true,
-      title: data['jcr:title'] || '',
-      template: data['cq:template'] || '',
-      pagePath,
-    }
-  } catch (err) {
-    return { success: false, error: err.message }
-  }
 }

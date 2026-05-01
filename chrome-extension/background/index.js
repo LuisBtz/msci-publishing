@@ -10,8 +10,6 @@
  * This file only wires up the panel behavior and the onMessage
  * router — all the actual work lives in the other modules.
  */
-import { handleMessage } from './messageHandlers.js'
-
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
-
-chrome.runtime.onMessage.addListener(handleMessage)
+import { handleMessage } from './messageHandlers.js';
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+chrome.runtime.onMessage.addListener(handleMessage);

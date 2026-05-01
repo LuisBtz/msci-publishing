@@ -10,91 +10,86 @@
  *   - checkAEMConnection: PING_AEM poll used to light the "connected"
  *                         dot at the top of the panel.
  */
-import { escHtml } from '../ui/escHtml.js'
-
+import { escHtml } from '../ui/escHtml.js';
 export function sendBackground(message) {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(message, (response) => {
-      if (chrome.runtime.lastError) {
-        resolve({ success: false, error: chrome.runtime.lastError.message })
-      } else {
-        resolve(response)
-      }
-    })
-  })
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage(message, (response) => {
+            if (chrome.runtime.lastError) {
+                resolve({ success: false, error: chrome.runtime.lastError.message });
+            }
+            else {
+                resolve(response);
+            }
+        });
+    });
 }
-
 export function runInAEM(message, logElementId) {
-  return new Promise((resolve) => {
-    const logEl = document.getElementById(logElementId)
-    logEl.classList.remove('hidden')
-    logEl.innerHTML = '<span class="log-info">Connecting to AEM...</span>\n'
-
-    chrome.runtime.sendMessage(message, (response) => {
-      if (chrome.runtime.lastError) {
-        logEl.innerHTML += `<span class="log-error">Error: ${escHtml(
-          chrome.runtime.lastError.message
-        )}</span>\n`
-        resolve(false)
-        return
-      }
-      const res = response || { success: false, error: 'No response from background' }
-      if (Array.isArray(res.logs)) {
-        res.logs.forEach((entry) => {
-          const cls =
-            entry.type === 'error'
-              ? 'log-error'
-              : entry.type === 'warn'
-                ? 'log-warn'
-                : 'log-success'
-          logEl.innerHTML += `<span class="${cls}">${escHtml(entry.message)}</span>\n`
-        })
-      }
-      if (!res.success && res.error) {
-        logEl.innerHTML += `<span class="log-error">Error: ${escHtml(res.error)}</span>\n`
-      }
-      logEl.innerHTML += `<span class="log-info">— Script completed —</span>\n`
-      logEl.scrollTop = logEl.scrollHeight
-      resolve(!!res.success)
-    })
-  })
+    return new Promise((resolve) => {
+        const logEl = document.getElementById(logElementId);
+        logEl.classList.remove('hidden');
+        logEl.innerHTML = '<span class="log-info">Connecting to AEM...</span>\n';
+        chrome.runtime.sendMessage(message, (response) => {
+            if (chrome.runtime.lastError) {
+                logEl.innerHTML += `<span class="log-error">Error: ${escHtml(chrome.runtime.lastError.message)}</span>\n`;
+                resolve(false);
+                return;
+            }
+            const res = response || { success: false, error: 'No response from background' };
+            if (Array.isArray(res.logs)) {
+                res.logs.forEach((entry) => {
+                    const cls = entry.type === 'error'
+                        ? 'log-error'
+                        : entry.type === 'warn'
+                            ? 'log-warn'
+                            : 'log-success';
+                    logEl.innerHTML += `<span class="${cls}">${escHtml(entry.message)}</span>\n`;
+                });
+            }
+            if (!res.success && res.error) {
+                logEl.innerHTML += `<span class="log-error">Error: ${escHtml(res.error)}</span>\n`;
+            }
+            logEl.innerHTML += `<span class="log-info">— Script completed —</span>\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+            resolve(!!res.success);
+        });
+    });
 }
-
 /**
  * Like runInAEM but does NOT write to a DOM element. Returns { success, logs }
  * so the caller can accumulate logs into the global process log.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function runInAEMSilent(message) {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage(message, (response) => {
-      if (chrome.runtime.lastError) {
-        resolve({
-          success: false,
-          logs: [{ type: 'error', message: chrome.runtime.lastError.message }],
-        })
-        return
-      }
-      const res = response || { success: false, error: 'No response from background' }
-      const logs = Array.isArray(res.logs) ? res.logs : []
-      if (!res.success && res.error) {
-        logs.push({ type: 'error', message: res.error })
-      }
-      resolve({ ...res, success: !!res.success, logs })
-    })
-  })
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage(message, (response) => {
+            if (chrome.runtime.lastError) {
+                resolve({
+                    success: false,
+                    logs: [{ type: 'error', message: chrome.runtime.lastError.message }],
+                });
+                return;
+            }
+            const res = response || { success: false, error: 'No response from background' };
+            const logs = Array.isArray(res.logs) ? res.logs : [];
+            if (!res.success && res.error) {
+                logs.push({ type: 'error', message: res.error });
+            }
+            resolve({ ...res, success: !!res.success, logs });
+        });
+    });
 }
-
 export function checkAEMConnection() {
-  chrome.runtime.sendMessage({ type: 'PING_AEM' }, (response) => {
-    const dot = document.getElementById('connection-status')
-    if (chrome.runtime.lastError || !response?.connected) {
-      dot.classList.remove('connected')
-      dot.classList.add('disconnected')
-      dot.title = 'Not connected to AEM — open AEM Author in the active tab'
-    } else {
-      dot.classList.remove('disconnected')
-      dot.classList.add('connected')
-      dot.title = 'Connected to AEM Author'
-    }
-  })
+    chrome.runtime.sendMessage({ type: 'PING_AEM' }, (response) => {
+        const dot = document.getElementById('connection-status');
+        if (chrome.runtime.lastError || !response?.connected) {
+            dot.classList.remove('connected');
+            dot.classList.add('disconnected');
+            dot.title = 'Not connected to AEM — open AEM Author in the active tab';
+        }
+        else {
+            dot.classList.remove('disconnected');
+            dot.classList.add('connected');
+            dot.title = 'Connected to AEM Author';
+        }
+    });
 }

@@ -5,26 +5,21 @@
  * to the DAM folder, AEM page, editor and preview. The report data
  * comes from state.processReport which was populated by step2Process.
  */
-import { state } from '../state.js'
-import { escHtml } from '../ui/escHtml.js'
-
+import { state } from '../state.js';
+import { escHtml } from '../ui/escHtml.js';
 export function populateStep3() {
-  const report = state.processReport
-  const container = document.getElementById('report-content')
-
-  if (!report) {
-    container.innerHTML = '<p class="empty-state">No report available</p>'
-    return
-  }
-
-  const hasErrors = report.errors && report.errors.length > 0
-  const statusClass = hasErrors ? 'report-status-warning' : 'report-status-success'
-  const statusText = hasErrors ? 'Process completed with errors' : 'Page created successfully'
-  const statusIcon = hasErrors ? '!' : '&#10003;'
-
-  const durationSec = report.duration_ms ? (report.duration_ms / 1000).toFixed(1) : '—'
-
-  container.innerHTML = `
+    const report = state.processReport;
+    const container = document.getElementById('report-content');
+    if (!report) {
+        container.innerHTML = '<p class="empty-state">No report available</p>';
+        return;
+    }
+    const hasErrors = report.errors && report.errors.length > 0;
+    const statusClass = hasErrors ? 'report-status-warning' : 'report-status-success';
+    const statusText = hasErrors ? 'Process completed with errors' : 'Page created successfully';
+    const statusIcon = hasErrors ? '!' : '&#10003;';
+    const durationSec = report.duration_ms ? (report.duration_ms / 1000).toFixed(1) : '—';
+    container.innerHTML = `
     <div class="report-status ${statusClass}">
       <span class="report-status-icon">${statusIcon}</span>
       <span>${statusText}</span>
@@ -93,13 +88,11 @@ export function populateStep3() {
       </div>
     </div>
 
-    ${
-      hasErrors
+    ${hasErrors
         ? `<div class="report-errors">
         <h3>Errors</h3>
         <ul>${report.errors.map((e) => `<li>${escHtml(e)}</li>`).join('')}</ul>
       </div>`
-        : ''
-    }
-  `
+        : ''}
+  `;
 }
